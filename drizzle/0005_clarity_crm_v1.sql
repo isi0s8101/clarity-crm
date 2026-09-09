@@ -1,0 +1,6 @@
+CREATE TABLE `crm_records` (`id` text PRIMARY KEY NOT NULL, `tenant_id` text NOT NULL, `team_id` text NOT NULL, `owner_id` text NOT NULL, `type` text NOT NULL, `title` text NOT NULL, `data` text DEFAULT '{}' NOT NULL, `status` text DEFAULT 'active' NOT NULL, `created_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL, `updated_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL);
+CREATE INDEX `idx_crm_records_tenant_type` ON `crm_records` (`tenant_id`,`type`);
+CREATE INDEX `idx_crm_records_tenant_owner` ON `crm_records` (`tenant_id`,`owner_id`);
+CREATE TABLE `crm_configurations` (`id` text PRIMARY KEY NOT NULL, `tenant_id` text NOT NULL, `kind` text NOT NULL, `name` text NOT NULL, `version` integer DEFAULT 1 NOT NULL, `active` integer DEFAULT 1 NOT NULL, `definition` text DEFAULT '{}' NOT NULL, `created_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL, `updated_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL);
+CREATE INDEX `idx_crm_config_tenant_kind` ON `crm_configurations` (`tenant_id`,`kind`);
+CREATE TABLE `automation_runs` (`id` text PRIMARY KEY NOT NULL, `tenant_id` text NOT NULL, `automation_id` text NOT NULL, `status` text NOT NULL, `input` text DEFAULT '{}' NOT NULL, `output` text DEFAULT '{}' NOT NULL, `error` text DEFAULT '' NOT NULL, `created_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL);
