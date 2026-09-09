@@ -10,6 +10,7 @@ import {
   teams,
   users,
 } from "@/db/schema";
+import { resolveAccessSelection } from "./access-resolution.js";
 import { canUseScopedResource, normalizeTenantSelector } from "./authz-policy.js";
 
 export type PermissionAction =
@@ -125,7 +126,7 @@ export async function resolveAuthContext(
     throw new ForbiddenError("Tenant invalide.");
   }
 
-  const [membershipRows, pendingInvitationRows] = await Promise.all([
+  const [membershipRows, pendingInvitationRows, membershipCountRows] = await Promise.all([
     db.select().from(memberships).where(eq(memberships.userId, identity.userId)),
     db
       .select()
@@ -136,36 +137,30 @@ export async function resolveAuthContext(
           eq(invitations.status, "pending"),
         ),
       ),
+    db.select({ count: sql<number>`count(*)` }).from(memberships),
   ]);
 
-  let membership = null as (typeof membershipRows)[number] | null;
-  let pendingInvitation = null as (typeof pendingInvitationRows)[number] | null;
+  const access = resolveAccessSelection({
+    tenantSelector,
+    memberships: membershipRows,
+    pendingInvitations: pendingInvitationRows,
+    totalMembershipCount: Number(membershipCountRows[0]?.count ?? 0),
+  });
 
-  if (tenantSelector) {
-    membership = membershipRows.find((item) => item.tenantId === tenantSelector) ?? null;
-    pendingInvitation =
-      pendingInvitationRows.find((item) => item.tenantId === tenantSelector) ?? null;
-    if (!membership && !pendingInvitation) {
-      throw new ForbiddenError("Accès au tenant refusé.");
-    }
-  } else {
-    const activeMemberships = membershipRows.filter((item) => item.status === "active");
-    if (activeMemberships.length === 1) {
-      membership = activeMemberships[0];
-    } else if (activeMemberships.length > 1) {
-      throw new ForbiddenError("Sélection explicite du tenant requise.");
-    } else if (membershipRows.length === 1) {
-      membership = membershipRows[0];
-    } else if (membershipRows.length > 1) {
-      throw new ForbiddenError("Sélection explicite du tenant requise.");
-    } else if (pendingInvitationRows.length === 1) {
-      pendingInvitation = pendingInvitationRows[0];
-    } else if (pendingInvitationRows.length > 1) {
+  if (access.kind === "denied") {
+    if (access.reason === "tenant_selection_required") {
       throw new ForbiddenError("Sélection explicite du tenant requise.");
     }
+    if (access.reason === "invitation_required") {
+      throw new ForbiddenError("Invitation requise pour rejoindre une organisation.");
+    }
+    throw new ForbiddenError("Accès au tenant refusé.");
   }
 
-  if (membership?.status !== undefined && membership.status !== "active") {
+  const membership = access.kind === "membership" ? access.membership : null;
+  const pendingInvitation = access.kind === "invitation" ? access.invitation : null;
+
+  if (membership && membership.status !== "active") {
     throw new ForbiddenError("Compte désactivé.");
   }
 
@@ -204,14 +199,6 @@ export async function resolveAuthContext(
       .set({ status: "accepted", updatedAt: new Date().toISOString() })
       .where(eq(invitations.id, pendingInvitation.id));
   } else {
-    const membershipCount = await db
-      .select({ count: sql<number>`count(*)` })
-      .from(memberships);
-
-    if (Number(membershipCount[0]?.count ?? 0) !== 0) {
-      throw new ForbiddenError("Invitation requise pour rejoindre une organisation.");
-    }
-
     tenantId = DEFAULT_TENANT_ID;
     await ensureBootstrapTenant();
     teamId = DEFAULT_TEAM_ID;
