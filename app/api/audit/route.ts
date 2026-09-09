@@ -12,13 +12,18 @@ import {
 export async function GET(request: NextRequest) {
   try {
     const actor = await resolveAuthContext(request);
-    await requirePermission(actor, "audit", "read");
+    const scope = await requirePermission(actor, "audit", "read");
     const params = request.nextUrl.searchParams;
     const result = params.get("result");
     const resourceType = params.get("resourceType");
     const db = getDb();
 
     const filters = [eq(auditEvents.tenantId, actor.tenantId)];
+    if (scope === "team") {
+      filters.push(eq(auditEvents.teamId, actor.teamId));
+    } else if (scope === "personal") {
+      filters.push(eq(auditEvents.actorId, actor.userId));
+    }
     if (result && ["success", "denied", "failure"].includes(result)) {
       filters.push(eq(auditEvents.result, result));
     }
