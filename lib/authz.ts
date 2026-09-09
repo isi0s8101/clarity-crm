@@ -10,6 +10,7 @@ import {
   teams,
   users,
 } from "@/db/schema";
+import { canUseScopedResource, normalizeTenantSelector } from "./authz-policy.js";
 
 export type PermissionAction =
   | "read"
@@ -48,6 +49,7 @@ const DEFAULT_TENANT_ID = "default";
 const DEFAULT_TENANT_NAME = "Clarity CRM";
 const DEFAULT_TEAM_ID = "default-sales";
 const DEFAULT_TEAM_NAME = "Équipe commerciale";
+const TENANT_SELECTOR_HEADER = "x-clarity-tenant-id";
 
 const defaultPermissions: Record<
   AuthContext["role"],
@@ -114,104 +116,128 @@ export async function resolveAuthContext(
 ): Promise<AuthContext> {
   const identity = readAuthenticatedIdentity(request);
   const db = getDb();
+  const rawTenantSelector = request.headers.get(TENANT_SELECTOR_HEADER);
+  const tenantSelector = rawTenantSelector
+    ? normalizeTenantSelector(rawTenantSelector)
+    : null;
 
-  await db
-    .insert(organizations)
-    .values({ id: DEFAULT_TENANT_ID, name: DEFAULT_TENANT_NAME })
-    .onConflictDoNothing();
+  if (rawTenantSelector && !tenantSelector) {
+    throw new ForbiddenError("Tenant invalide.");
+  }
 
-  await db
-    .insert(teams)
-    .values({ id: DEFAULT_TEAM_ID, tenantId: DEFAULT_TENANT_ID, name: DEFAULT_TEAM_NAME })
-    .onConflictDoNothing();
-
-  await db
-    .insert(users)
-    .values({
-      id: identity.userId,
-      email: identity.email,
-      displayName: identity.displayName,
-    })
-    .onConflictDoUpdate({
-      target: users.id,
-      set: {
-        email: identity.email,
-        displayName: identity.displayName,
-        updatedAt: new Date().toISOString(),
-      },
-    });
-
-  await seedRolePermissions(DEFAULT_TENANT_ID);
-
-  const existingMembership = await db
-    .select()
-    .from(memberships)
-    .where(
-      and(
-        eq(memberships.tenantId, DEFAULT_TENANT_ID),
-        eq(memberships.userId, identity.userId),
-      ),
-    )
-    .limit(1);
-
-  let membership = existingMembership[0];
-  if (!membership) {
-    const pendingInvitation = await db
+  const [membershipRows, pendingInvitationRows] = await Promise.all([
+    db.select().from(memberships).where(eq(memberships.userId, identity.userId)),
+    db
       .select()
       .from(invitations)
       .where(
         and(
-          eq(invitations.tenantId, DEFAULT_TENANT_ID),
           eq(invitations.email, identity.email),
           eq(invitations.status, "pending"),
         ),
-      )
-      .limit(1);
+      ),
+  ]);
 
-    const membershipCount = await db
-      .select({ count: sql<number>`count(*)` })
-      .from(memberships)
-      .where(eq(memberships.tenantId, DEFAULT_TENANT_ID));
+  let membership = null as (typeof membershipRows)[number] | null;
+  let pendingInvitation = null as (typeof pendingInvitationRows)[number] | null;
 
-    const role =
-      pendingInvitation[0]?.role === "admin" || pendingInvitation[0]?.role === "user"
-        ? pendingInvitation[0].role
-        : Number(membershipCount[0]?.count ?? 0) === 0
-          ? "admin"
-          : "user";
-    const teamId = pendingInvitation[0]?.teamId ?? DEFAULT_TEAM_ID;
-    const inserted = await db
-      .insert(memberships)
-      .values({
-        id: `${DEFAULT_TENANT_ID}:${identity.userId}`,
-        tenantId: DEFAULT_TENANT_ID,
-        userId: identity.userId,
-        teamId,
-        role,
-        status: "active",
-      })
-      .returning();
-    membership = inserted[0];
-
-    if (pendingInvitation[0]) {
-      await db
-        .update(invitations)
-        .set({ status: "accepted", updatedAt: new Date().toISOString() })
-        .where(eq(invitations.id, pendingInvitation[0].id));
+  if (tenantSelector) {
+    membership = membershipRows.find((item) => item.tenantId === tenantSelector) ?? null;
+    pendingInvitation =
+      pendingInvitationRows.find((item) => item.tenantId === tenantSelector) ?? null;
+    if (!membership && !pendingInvitation) {
+      throw new ForbiddenError("Accès au tenant refusé.");
+    }
+  } else {
+    const activeMemberships = membershipRows.filter((item) => item.status === "active");
+    if (activeMemberships.length === 1) {
+      membership = activeMemberships[0];
+    } else if (activeMemberships.length > 1) {
+      throw new ForbiddenError("Sélection explicite du tenant requise.");
+    } else if (membershipRows.length === 1) {
+      membership = membershipRows[0];
+    } else if (membershipRows.length > 1) {
+      throw new ForbiddenError("Sélection explicite du tenant requise.");
+    } else if (pendingInvitationRows.length === 1) {
+      pendingInvitation = pendingInvitationRows[0];
+    } else if (pendingInvitationRows.length > 1) {
+      throw new ForbiddenError("Sélection explicite du tenant requise.");
     }
   }
 
-  if (membership.status !== "active") {
+  if (membership?.status !== undefined && membership.status !== "active") {
     throw new ForbiddenError("Compte désactivé.");
   }
+
+  let tenantId: string;
+  let teamId: string;
+  let role: "admin" | "user";
+
+  if (membership) {
+    tenantId = membership.tenantId;
+    teamId = await resolveTeamForTenant(tenantId, membership.teamId);
+    role = membership.role === "admin" ? "admin" : "user";
+
+    if (!membership.teamId) {
+      await db
+        .update(memberships)
+        .set({ teamId, updatedAt: new Date().toISOString() })
+        .where(eq(memberships.id, membership.id));
+    }
+  } else if (pendingInvitation) {
+    tenantId = pendingInvitation.tenantId;
+    await requireOrganization(tenantId);
+    teamId = await resolveTeamForTenant(tenantId, pendingInvitation.teamId);
+    role = pendingInvitation.role === "admin" ? "admin" : "user";
+
+    await upsertUser(identity);
+    await db.insert(memberships).values({
+      id: `${tenantId}:${identity.userId}`,
+      tenantId,
+      userId: identity.userId,
+      teamId,
+      role,
+      status: "active",
+    });
+    await db
+      .update(invitations)
+      .set({ status: "accepted", updatedAt: new Date().toISOString() })
+      .where(eq(invitations.id, pendingInvitation.id));
+  } else {
+    const membershipCount = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(memberships);
+
+    if (Number(membershipCount[0]?.count ?? 0) !== 0) {
+      throw new ForbiddenError("Invitation requise pour rejoindre une organisation.");
+    }
+
+    tenantId = DEFAULT_TENANT_ID;
+    await ensureBootstrapTenant();
+    teamId = DEFAULT_TEAM_ID;
+    role = "admin";
+
+    await upsertUser(identity);
+    await db.insert(memberships).values({
+      id: `${tenantId}:${identity.userId}`,
+      tenantId,
+      userId: identity.userId,
+      teamId,
+      role,
+      status: "active",
+    });
+  }
+
+  await upsertUser(identity);
+  await seedRolePermissions(tenantId);
 
   return {
     userId: identity.userId,
     email: identity.email,
     displayName: identity.displayName,
-    tenantId: membership.tenantId,
-    teamId: membership.teamId ?? DEFAULT_TEAM_ID,
-    role: membership.role === "admin" ? "admin" : "user",
+    tenantId,
+    teamId,
+    role,
   };
 }
 
@@ -260,17 +286,15 @@ export function canUseResource(
   actor: AuthContext,
   scope: PermissionScope,
   resource: { tenantId: string; teamId: string; ownerId: string },
-) {
-  if (resource.tenantId !== actor.tenantId) return false;
-  if (scope === "tenant") return true;
-  if (scope === "team") return resource.teamId === actor.teamId;
-  return resource.ownerId === actor.userId;
+): boolean {
+  return Boolean(canUseScopedResource(actor, scope, resource));
 }
 
 export async function audit(actor: AuthContext, input: AuditInput) {
   const db = getDb();
   await db.insert(auditEvents).values({
     tenantId: actor.tenantId,
+    teamId: actor.teamId || null,
     actorId: actor.userId,
     actorEmail: actor.email,
     action: input.action,
@@ -293,6 +317,76 @@ export function authErrorResponse(error: unknown) {
     return Response.json({ error: error.message }, { status: error.status });
   }
   return null;
+}
+
+async function upsertUser(identity: {
+  userId: string;
+  email: string;
+  displayName: string;
+}) {
+  const db = getDb();
+  await db
+    .insert(users)
+    .values({
+      id: identity.userId,
+      email: identity.email,
+      displayName: identity.displayName,
+    })
+    .onConflictDoUpdate({
+      target: users.id,
+      set: {
+        email: identity.email,
+        displayName: identity.displayName,
+        updatedAt: new Date().toISOString(),
+      },
+    });
+}
+
+async function requireOrganization(tenantId: string) {
+  const db = getDb();
+  const rows = await db
+    .select({ id: organizations.id })
+    .from(organizations)
+    .where(eq(organizations.id, tenantId))
+    .limit(1);
+  if (!rows[0]) {
+    throw new ForbiddenError("Organisation introuvable.");
+  }
+}
+
+async function ensureBootstrapTenant() {
+  const db = getDb();
+  await db
+    .insert(organizations)
+    .values({ id: DEFAULT_TENANT_ID, name: DEFAULT_TENANT_NAME })
+    .onConflictDoNothing();
+  await db
+    .insert(teams)
+    .values({ id: DEFAULT_TEAM_ID, tenantId: DEFAULT_TENANT_ID, name: DEFAULT_TEAM_NAME })
+    .onConflictDoNothing();
+}
+
+async function resolveTeamForTenant(tenantId: string, requestedTeamId: string | null) {
+  const db = getDb();
+  if (requestedTeamId) {
+    const rows = await db
+      .select({ id: teams.id })
+      .from(teams)
+      .where(and(eq(teams.id, requestedTeamId), eq(teams.tenantId, tenantId)))
+      .limit(1);
+    if (!rows[0]) {
+      throw new ForbiddenError("Équipe incohérente avec le tenant.");
+    }
+    return requestedTeamId;
+  }
+
+  const defaultTeamId =
+    tenantId === DEFAULT_TENANT_ID ? DEFAULT_TEAM_ID : `team:${tenantId}:default`;
+  await db
+    .insert(teams)
+    .values({ id: defaultTeamId, tenantId, name: DEFAULT_TEAM_NAME })
+    .onConflictDoNothing();
+  return defaultTeamId;
 }
 
 async function seedRolePermissions(tenantId: string) {
