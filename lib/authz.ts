@@ -11,7 +11,7 @@ import {
   users,
 } from "@/db/schema";
 import { resolveAccessSelection } from "./access-resolution.js";
-import { canUseScopedResource, normalizeTenantSelector } from "./authz-policy.js";
+import { canUseScopedResource, tenantSelectorFromHeaders } from "./authz-policy.js";
 
 export type PermissionAction =
   | "read"
@@ -50,7 +50,6 @@ const DEFAULT_TENANT_ID = "default";
 const DEFAULT_TENANT_NAME = "Clarity CRM";
 const DEFAULT_TEAM_ID = "default-sales";
 const DEFAULT_TEAM_NAME = "Équipe commerciale";
-const TENANT_SELECTOR_HEADER = "x-clarity-tenant-id";
 
 const defaultPermissions: Record<
   AuthContext["role"],
@@ -117,12 +116,10 @@ export async function resolveAuthContext(
 ): Promise<AuthContext> {
   const identity = readAuthenticatedIdentity(request);
   const db = getDb();
-  const rawTenantSelector = request.headers.get(TENANT_SELECTOR_HEADER);
-  const tenantSelector = rawTenantSelector
-    ? normalizeTenantSelector(rawTenantSelector)
-    : null;
+  const selector = tenantSelectorFromHeaders(request.headers);
+  const tenantSelector = selector.value;
 
-  if (rawTenantSelector && !tenantSelector) {
+  if (selector.present && !tenantSelector) {
     throw new ForbiddenError("Tenant invalide.");
   }
 
