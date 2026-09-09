@@ -106,19 +106,74 @@ export const opportunities = sqliteTable(
   ],
 );
 
-export const auditEvents = sqliteTable("audit_events", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  tenantId: text("tenant_id").notNull().default("default"),
-  actorId: text("actor_id").notNull(),
-  actorEmail: text("actor_email").notNull(),
-  action: text("action").notNull(),
-  resourceType: text("resource_type").notNull().default("unknown"),
-  resourceId: text("resource_id").notNull().default("unknown"),
-  result: text("result").notNull().default("success"),
-  before: text("before").notNull().default(""),
-  after: text("after").notNull().default(""),
-  entityType: text("entity_type").notNull(),
-  entityId: text("entity_id").notNull(),
-  details: text("details").notNull().default(""),
+export const crmRecords = sqliteTable(
+  "crm_records",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
+    teamId: text("team_id").notNull(),
+    ownerId: text("owner_id").notNull(),
+    type: text("type").notNull(),
+    title: text("title").notNull(),
+    data: text("data").notNull().default("{}"),
+    status: text("status").notNull().default("active"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("idx_crm_records_tenant_type").on(table.tenantId, table.type),
+    index("idx_crm_records_tenant_owner").on(table.tenantId, table.ownerId),
+  ],
+);
+
+export const crmConfigurations = sqliteTable(
+  "crm_configurations",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
+    kind: text("kind").notNull(),
+    name: text("name").notNull(),
+    version: integer("version").notNull().default(1),
+    active: integer("active").notNull().default(1),
+    definition: text("definition").notNull().default("{}"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [index("idx_crm_config_tenant_kind").on(table.tenantId, table.kind)],
+);
+
+export const automationRuns = sqliteTable("automation_runs", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull(),
+  automationId: text("automation_id").notNull(),
+  status: text("status").notNull(),
+  input: text("input").notNull().default("{}"),
+  output: text("output").notNull().default("{}"),
+  error: text("error").notNull().default(""),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
+
+export const auditEvents = sqliteTable(
+  "audit_events",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    tenantId: text("tenant_id").notNull().default("default"),
+    teamId: text("team_id"),
+    actorId: text("actor_id").notNull(),
+    actorEmail: text("actor_email").notNull(),
+    action: text("action").notNull(),
+    resourceType: text("resource_type").notNull().default("unknown"),
+    resourceId: text("resource_id").notNull().default("unknown"),
+    result: text("result").notNull().default("success"),
+    before: text("before").notNull().default(""),
+    after: text("after").notNull().default(""),
+    entityType: text("entity_type").notNull(),
+    entityId: text("entity_id").notNull(),
+    details: text("details").notNull().default(""),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("idx_audit_events_tenant_team").on(table.tenantId, table.teamId),
+    index("idx_audit_events_tenant_actor").on(table.tenantId, table.actorId),
+  ],
+);
