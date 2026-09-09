@@ -36,6 +36,7 @@ export async function GET(request: NextRequest) {
           tenantId: memberships.tenantId,
           teamId: memberships.teamId,
           role: memberships.role,
+          status: memberships.status,
           email: users.email,
           displayName: users.displayName,
           updatedAt: memberships.updatedAt,
@@ -159,13 +160,17 @@ export async function PATCH(request: NextRequest) {
         .where(and(eq(memberships.tenantId, actor.tenantId), eq(memberships.userId, userId)))
         .limit(1);
       if (!existing[0]) return NextResponse.json({ error: "Membre introuvable." }, { status: 404 });
-      if (userId === actor.userId && role !== "admin") {
-        return NextResponse.json({ error: "Un admin ne peut pas se retirer son propre rôle." }, { status: 400 });
+      const status = typeof body.status === "string" ? body.status : existing[0].status;
+      if (status !== "active" && status !== "disabled") {
+        return NextResponse.json({ error: "Statut invalide." }, { status: 400 });
+      }
+      if (userId === actor.userId && (role !== "admin" || status !== "active")) {
+        return NextResponse.json({ error: "Un admin ne peut pas désactiver ou rétrograder son propre compte." }, { status: 400 });
       }
 
       const updated = await db
         .update(memberships)
-        .set({ role, teamId, updatedAt: new Date().toISOString() })
+        .set({ role, teamId, status, updatedAt: new Date().toISOString() })
         .where(and(eq(memberships.tenantId, actor.tenantId), eq(memberships.userId, userId)))
         .returning();
       await audit(actor, {

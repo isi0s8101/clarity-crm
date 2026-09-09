@@ -1,4 +1,4 @@
-# Clarity CRM — clarity-crm_v0.2
+# Clarity CRM — clarity-crm_v0.3
 
 CRM professionnel modulaire conçu pour piloter les ventes, configurer les objets métier, automatiser les tâches et gouverner les accès sans complexité excessive.
 
@@ -40,3 +40,14 @@ Administration réelle ajoutée :
 - modification de rôle/équipe avec garde-fou contre l’auto-rétrogradation admin ;
 - modification de périmètre de permission avec refus d’administration pour le profil utilisateur ;
 - migration D1 additive pour les invitations.
+
+## clarity-crm_v0.3
+
+Cycle d’accès renforcé :
+
+- acceptation automatique d’une invitation persistante au premier login ;
+- statut de membre `active` / `disabled` appliqué côté serveur ;
+- désactivation/réactivation contrôlée depuis l’administration ;
+- garde-fou contre l’auto-désactivation d’un administrateur ;
+- API `/api/audit` protégée et filtrable par résultat ou type de ressource ;
+- journal d’audit admin branché sur les événements serveur.

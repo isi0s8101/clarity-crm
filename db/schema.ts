@@ -53,6 +53,7 @@ export const memberships = sqliteTable(
     userId: text("user_id").notNull().references(() => users.id),
     teamId: text("team_id").references(() => teams.id),
     role: text("role").notNull().default("user"),
+    status: text("status").notNull().default("active"),
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
     updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   },

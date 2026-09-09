@@ -158,6 +158,7 @@ type AdminMember = {
   displayName: string;
   role: "admin" | "user";
   teamId: string | null;
+  status: "active" | "disabled";
 };
 
 type AdminPermission = {
@@ -181,6 +182,17 @@ type AdminAccessPayload = {
   members: AdminMember[];
   permissions: AdminPermission[];
   invitations: AdminInvitation[];
+};
+
+type ServerAuditEvent = {
+  id: number;
+  actorEmail: string;
+  action: string;
+  resourceType: string;
+  resourceId: string;
+  result: "success" | "denied" | "failure";
+  details: string;
+  createdAt: string;
 };
 
 const navigation = [
@@ -567,7 +579,7 @@ function RightsView() {
     refresh();
   };
 
-  const updateMember = async (member: AdminMember, patch: Partial<Pick<AdminMember, "role" | "teamId">>) => {
+  const updateMember = async (member: AdminMember, patch: Partial<Pick<AdminMember, "role" | "teamId" | "status">>) => {
     const response = await fetch("/api/admin/access", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
@@ -576,6 +588,7 @@ function RightsView() {
         userId: member.userId,
         role: patch.role ?? member.role,
         teamId: patch.teamId ?? member.teamId,
+        status: patch.status ?? member.status,
       }),
     });
     if (!response.ok) {
@@ -612,7 +625,7 @@ function RightsView() {
       <Panel>
         <PanelTitle title="Membres et rôles" description="Les changements sont persistants, auditables et appliqués côté serveur." action={<Button size="sm" variant="outline" onClick={() => refresh()}><RefreshCw className="size-4" />Actualiser</Button>} />
         <div className="overflow-hidden rounded-xl border border-slate-200">
-          <Table><TableHeader><TableRow><TableHead>Membre</TableHead><TableHead>Rôle</TableHead><TableHead className="hidden md:table-cell">Équipe</TableHead><TableHead>État</TableHead></TableRow></TableHeader><TableBody>{loading ? <TableRow><TableCell colSpan={4}>Chargement…</TableCell></TableRow> : members.map((member) => <TableRow key={member.userId}><TableCell><div><strong className="font-medium text-slate-900">{member.displayName}</strong><p className="text-xs text-slate-500">{member.email}</p></div></TableCell><TableCell><Select value={member.role} onValueChange={(role) => updateMember(member, { role: role as "admin" | "user" })}><SelectTrigger className="w-[145px]"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="admin">Administrateur</SelectItem><SelectItem value="user">Utilisateur</SelectItem></SelectContent></Select></TableCell><TableCell className="hidden md:table-cell"><Select value={member.teamId ?? "none"} onValueChange={(teamId) => updateMember(member, { teamId: teamId === "none" ? null : teamId })}><SelectTrigger className="w-[190px]"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">Aucune équipe</SelectItem>{teams.map((team) => <SelectItem key={team.id} value={team.id}>{team.name}</SelectItem>)}</SelectContent></Select></TableCell><TableCell><StatusPill tone={member.role === "admin" ? "green" : "blue"}>{member.role === "admin" ? "Admin" : "Utilisateur"}</StatusPill></TableCell></TableRow>)}</TableBody></Table>
+          <Table><TableHeader><TableRow><TableHead>Membre</TableHead><TableHead>Rôle</TableHead><TableHead className="hidden md:table-cell">Équipe</TableHead><TableHead>État</TableHead><TableHead className="w-32">Accès</TableHead></TableRow></TableHeader><TableBody>{loading ? <TableRow><TableCell colSpan={5}>Chargement…</TableCell></TableRow> : members.map((member) => <TableRow key={member.userId}><TableCell><div><strong className="font-medium text-slate-900">{member.displayName}</strong><p className="text-xs text-slate-500">{member.email}</p></div></TableCell><TableCell><Select value={member.role} onValueChange={(role) => updateMember(member, { role: role as "admin" | "user" })}><SelectTrigger className="w-[145px]"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="admin">Administrateur</SelectItem><SelectItem value="user">Utilisateur</SelectItem></SelectContent></Select></TableCell><TableCell className="hidden md:table-cell"><Select value={member.teamId ?? "none"} onValueChange={(teamId) => updateMember(member, { teamId: teamId === "none" ? null : teamId })}><SelectTrigger className="w-[190px]"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">Aucune équipe</SelectItem>{teams.map((team) => <SelectItem key={team.id} value={team.id}>{team.name}</SelectItem>)}</SelectContent></Select></TableCell><TableCell><StatusPill tone={member.status === "active" ? member.role === "admin" ? "green" : "blue" : "neutral"}>{member.status === "active" ? member.role === "admin" ? "Admin" : "Utilisateur" : "Désactivé"}</StatusPill></TableCell><TableCell><Button size="sm" variant="outline" onClick={() => updateMember(member, { status: member.status === "active" ? "disabled" : "active" })}>{member.status === "active" ? "Désactiver" : "Réactiver"}</Button></TableCell></TableRow>)}</TableBody></Table>
         </div>
       </Panel>
       <div className="grid gap-5 lg:grid-cols-2">
@@ -713,11 +726,38 @@ function DataView({ deals, onAudit }: { deals: Deal[]; onAudit: (item: AuditItem
 }
 
 function AuditView({ items }: { items: AuditItem[] }) {
+  const [serverItems, setServerItems] = useState<ServerAuditEvent[]>([]);
+  const [resultFilter, setResultFilter] = useState("all");
+  const [resourceFilter, setResourceFilter] = useState("all");
+
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (resultFilter !== "all") params.set("result", resultFilter);
+    if (resourceFilter !== "all") params.set("resourceType", resourceFilter);
+    fetch(`/api/audit?${params.toString()}`)
+      .then(async (response): Promise<{ items: ServerAuditEvent[] }> =>
+        response.ok ? (response.json() as Promise<{ items: ServerAuditEvent[] }>) : { items: [] },
+      )
+      .then((payload) => setServerItems(payload.items))
+      .catch(() => undefined);
+  }, [resultFilter, resourceFilter]);
+
+  const displayItems: AuditItem[] =
+    serverItems.length > 0
+      ? serverItems.map((item) => ({
+          action: item.action,
+          detail: `${item.resourceType}:${item.resourceId} · ${item.result}`,
+          actor: item.actorEmail,
+          time: new Date(item.createdAt).toLocaleString("fr-FR"),
+          tone: item.result === "success" ? "green" : item.result === "denied" ? "amber" : "neutral",
+        }))
+      : items;
+
   return (
     <Panel>
-      <PanelTitle title="Historique des actions" description="Horodatage, acteur, changement et contexte sont conservés." action={<div className="flex gap-2"><Button variant="outline" size="sm"><Filter className="size-4" />Filtrer</Button><Button variant="outline" size="sm"><Download className="size-4" />Exporter</Button></div>} />
+      <PanelTitle title="Historique des actions" description="Horodatage, acteur, ressource, résultat et contexte sont lus depuis l’audit serveur." action={<div className="flex gap-2"><Select value={resultFilter} onValueChange={setResultFilter}><SelectTrigger className="w-[130px]"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Tous</SelectItem><SelectItem value="success">Succès</SelectItem><SelectItem value="denied">Refusés</SelectItem><SelectItem value="failure">Échecs</SelectItem></SelectContent></Select><Select value={resourceFilter} onValueChange={setResourceFilter}><SelectTrigger className="w-[155px]"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Toutes ressources</SelectItem><SelectItem value="opportunity">Opportunités</SelectItem><SelectItem value="membership">Membres</SelectItem><SelectItem value="invitation">Invitations</SelectItem><SelectItem value="role_permission">Permissions</SelectItem></SelectContent></Select></div>} />
       <div className="audit-timeline">
-        {items.map((item, index) => (
+        {displayItems.map((item, index) => (
           <article className="audit-event" key={`${item.action}-${item.time}-${index}`}>
             <span className={`audit-marker dot-${item.tone}`}><History className="size-4" /></span>
             <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><h3>{item.action}</h3><StatusPill tone={item.tone}>{item.actor}</StatusPill></div><p>{item.detail}</p></div>

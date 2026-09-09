@@ -3,6 +3,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   auditEvents,
+  invitations,
   memberships,
   organizations,
   rolePermissions,
@@ -155,23 +156,53 @@ export async function resolveAuthContext(
 
   let membership = existingMembership[0];
   if (!membership) {
+    const pendingInvitation = await db
+      .select()
+      .from(invitations)
+      .where(
+        and(
+          eq(invitations.tenantId, DEFAULT_TENANT_ID),
+          eq(invitations.email, identity.email),
+          eq(invitations.status, "pending"),
+        ),
+      )
+      .limit(1);
+
     const membershipCount = await db
       .select({ count: sql<number>`count(*)` })
       .from(memberships)
       .where(eq(memberships.tenantId, DEFAULT_TENANT_ID));
 
-    const role = Number(membershipCount[0]?.count ?? 0) === 0 ? "admin" : "user";
+    const role =
+      pendingInvitation[0]?.role === "admin" || pendingInvitation[0]?.role === "user"
+        ? pendingInvitation[0].role
+        : Number(membershipCount[0]?.count ?? 0) === 0
+          ? "admin"
+          : "user";
+    const teamId = pendingInvitation[0]?.teamId ?? DEFAULT_TEAM_ID;
     const inserted = await db
       .insert(memberships)
       .values({
         id: `${DEFAULT_TENANT_ID}:${identity.userId}`,
         tenantId: DEFAULT_TENANT_ID,
         userId: identity.userId,
-        teamId: DEFAULT_TEAM_ID,
+        teamId,
         role,
+        status: "active",
       })
       .returning();
     membership = inserted[0];
+
+    if (pendingInvitation[0]) {
+      await db
+        .update(invitations)
+        .set({ status: "accepted", updatedAt: new Date().toISOString() })
+        .where(eq(invitations.id, pendingInvitation[0].id));
+    }
+  }
+
+  if (membership.status !== "active") {
+    throw new ForbiddenError("Compte désactivé.");
   }
 
   return {
