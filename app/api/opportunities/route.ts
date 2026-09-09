@@ -1,7 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
-import { auditEvents, opportunities } from "@/db/schema";
+import { opportunities } from "@/db/schema";
+import {
+  audit,
+  authErrorResponse,
+  canUseResource,
+  requirePermission,
+  resolveAuthContext,
+} from "@/lib/authz";
 
 const allowedStages = new Set([
   "qualification",
@@ -11,20 +18,22 @@ const allowedStages = new Set([
   "gagne",
 ]);
 
-function identity(request: NextRequest) {
-  return {
-    userId: request.headers.get("oai-authenticated-user-id") ?? "workspace-user",
-    email:
-      request.headers.get("oai-authenticated-user-email") ?? "utilisateur@workspace",
-  };
-}
-
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
+    const actor = await resolveAuthContext(request);
+    const scope = await requirePermission(actor, "opportunity", "read");
     const db = getDb();
-    const rows = await db.select().from(opportunities).orderBy(desc(opportunities.updatedAt));
-    return NextResponse.json({ items: rows });
+    const rows = await db
+      .select()
+      .from(opportunities)
+      .where(eq(opportunities.tenantId, actor.tenantId))
+      .orderBy(desc(opportunities.updatedAt));
+
+    const visible = rows.filter((row) => canUseResource(actor, scope, row));
+    return NextResponse.json({ items: visible });
   } catch (error) {
+    const authResponse = authErrorResponse(error);
+    if (authResponse) return authResponse;
     console.error("opportunities:list", error);
     return NextResponse.json(
       { items: [], error: "Les données enregistrées sont momentanément indisponibles." },
@@ -34,8 +43,9 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  const actor = identity(request);
   try {
+    const actor = await resolveAuthContext(request);
+    await requirePermission(actor, "opportunity", "create");
     const body = (await request.json()) as Record<string, unknown>;
     const name = typeof body.name === "string" ? body.name.trim() : "";
     const company = typeof body.company === "string" ? body.company.trim() : "";
@@ -50,6 +60,8 @@ export async function POST(request: NextRequest) {
     const inserted = await db
       .insert(opportunities)
       .values({
+        tenantId: actor.tenantId,
+        teamId: actor.teamId,
         name: name.slice(0, 100),
         company: company.slice(0, 100),
         amount: Math.round(amount),
@@ -60,25 +72,28 @@ export async function POST(request: NextRequest) {
       .returning();
 
     const created = inserted[0];
-    await db.insert(auditEvents).values({
-      actorId: actor.userId,
-      actorEmail: actor.email,
+    await audit(actor, {
       action: "opportunity.created",
-      entityType: "opportunity",
-      entityId: String(created.id),
-      details: JSON.stringify({ name: created.name, stage: created.stage }),
+      resourceType: "opportunity",
+      resourceId: String(created.id),
+      result: "success",
+      after: created,
+      details: { name: created.name, stage: created.stage },
     });
 
     return NextResponse.json({ item: created }, { status: 201 });
   } catch (error) {
+    const authResponse = authErrorResponse(error);
+    if (authResponse) return authResponse;
     console.error("opportunities:create", error);
     return NextResponse.json({ error: "Enregistrement impossible." }, { status: 503 });
   }
 }
 
 export async function PATCH(request: NextRequest) {
-  const actor = identity(request);
   try {
+    const actor = await resolveAuthContext(request);
+    const scope = await requirePermission(actor, "opportunity", "update");
     const body = (await request.json()) as Record<string, unknown>;
     const id = Number(body.id);
     const stage = typeof body.stage === "string" ? body.stage : "";
@@ -87,27 +102,52 @@ export async function PATCH(request: NextRequest) {
     }
 
     const db = getDb();
+    const existing = await db
+      .select()
+      .from(opportunities)
+      .where(and(eq(opportunities.id, id), eq(opportunities.tenantId, actor.tenantId)))
+      .limit(1);
+
+    if (!existing[0]) {
+      return NextResponse.json({ error: "Opportunité introuvable." }, { status: 404 });
+    }
+
+    if (!canUseResource(actor, scope, existing[0])) {
+      await audit(actor, {
+        action: "opportunity.stage_change_denied",
+        resourceType: "opportunity",
+        resourceId: String(id),
+        result: "denied",
+        before: existing[0],
+        details: { requestedStage: stage },
+      });
+      return NextResponse.json({ error: "Autorisation insuffisante." }, { status: 403 });
+    }
+
     const updated = await db
       .update(opportunities)
       .set({ stage, updatedAt: new Date().toISOString() })
-      .where(eq(opportunities.id, id))
+      .where(and(eq(opportunities.id, id), eq(opportunities.tenantId, actor.tenantId)))
       .returning();
 
     if (!updated[0]) {
       return NextResponse.json({ error: "Opportunité introuvable." }, { status: 404 });
     }
 
-    await db.insert(auditEvents).values({
-      actorId: actor.userId,
-      actorEmail: actor.email,
+    await audit(actor, {
       action: "opportunity.stage_changed",
-      entityType: "opportunity",
-      entityId: String(id),
-      details: JSON.stringify({ stage }),
+      resourceType: "opportunity",
+      resourceId: String(id),
+      result: "success",
+      before: existing[0],
+      after: updated[0],
+      details: { stage },
     });
 
     return NextResponse.json({ item: updated[0] });
   } catch (error) {
+    const authResponse = authErrorResponse(error);
+    if (authResponse) return authResponse;
     console.error("opportunities:update", error);
     return NextResponse.json({ error: "Mise à jour impossible." }, { status: 503 });
   }

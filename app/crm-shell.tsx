@@ -33,7 +33,6 @@ import {
   Sparkles,
   Target,
   Upload,
-  User,
   Users,
   Wand2,
   Workflow,
@@ -137,6 +136,17 @@ type AuditItem = {
   actor: string;
   time: string;
   tone: "blue" | "green" | "amber" | "neutral";
+};
+
+type CRMUser = {
+  email: string;
+  displayName: string;
+};
+
+type SessionUser = CRMUser & {
+  role: "admin" | "user";
+  tenantId: string;
+  teamId: string;
 };
 
 const navigation = [
@@ -535,10 +545,14 @@ function DataView({ deals, onAudit }: { deals: Deal[]; onAudit: (item: AuditItem
   const fileRef = useRef<HTMLInputElement>(null);
   const [fileState, setFileState] = useState<{ name: string; rows: number; valid: boolean } | null>(null);
 
-  const exportCsv = () => {
-    const escape = (value: string | number) => `"${String(value).replaceAll('"', '""')}"`;
-    const csv = [["nom", "societe", "montant", "etape", "responsable"], ...deals.map((deal) => [deal.name, deal.company, deal.amount, deal.stage, deal.owner])].map((row) => row.map(escape).join(",")).join("\n");
-    const url = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" }));
+  const exportCsv = async () => {
+    const response = await fetch("/api/opportunities/export");
+    if (!response.ok) {
+      toast.error("Export refusé ou indisponible.");
+      return;
+    }
+    const csv = await response.text();
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
     const anchor = document.createElement("a");
     anchor.href = url; anchor.download = "opportunites-clarity-crm.csv"; anchor.click(); URL.revokeObjectURL(url);
     onAudit({ action: "Export généré", detail: `${deals.length} opportunités · CSV UTF-8`, actor: "Mélanie Laurent", time: "À l’instant", tone: "blue" });
@@ -583,8 +597,9 @@ function AuditView({ items }: { items: AuditItem[] }) {
   );
 }
 
-export function CRMShell() {
+export function CRMShell({ user }: { user: CRMUser }) {
   const [view, setView] = useState<View>("dashboard");
+  const [sessionUser, setSessionUser] = useState<SessionUser | null>(null);
   const [deals, setDeals] = useState<Deal[]>(demoDeals);
   const [query, setQuery] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
@@ -594,6 +609,15 @@ export function CRMShell() {
 
   useEffect(() => {
     let active = true;
+    fetch("/api/session")
+      .then(async (response): Promise<{ user: SessionUser } | null> =>
+        response.ok ? (response.json() as Promise<{ user: SessionUser }>) : null,
+      )
+      .then((payload) => {
+        if (active && payload?.user) setSessionUser(payload.user);
+      })
+      .catch(() => undefined);
+
     fetch("/api/opportunities")
       .then(async (response): Promise<{ items: Record<string, unknown>[] }> =>
         response.ok ? (response.json() as Promise<{ items: Record<string, unknown>[] }>) : { items: [] },
@@ -606,7 +630,7 @@ export function CRMShell() {
           company: String(item.company),
           amount: Number(item.amount),
           stage: item.stage as Stage,
-          owner: "ML",
+          owner: String(item.ownerEmail ?? user.email).slice(0, 2).toUpperCase(),
           due: "À planifier",
           confidence: 30,
           saved: true,
@@ -615,9 +639,10 @@ export function CRMShell() {
       })
       .catch(() => undefined);
     return () => { active = false; };
-  }, []);
+  }, [user.email]);
 
   const title = viewTitles[view];
+  const canAdminister = sessionUser?.role === "admin";
   const filteredCount = useMemo(() => deals.filter((deal) => `${deal.name} ${deal.company}`.toLowerCase().includes(query.toLowerCase())).length, [deals, query]);
 
   const pushAudit = (item: AuditItem) => setAudit((current) => [item, ...current]);
@@ -630,22 +655,31 @@ export function CRMShell() {
     }
     setSaving(true);
     const draft: Deal = { id: `local-${Date.now()}`, name: form.name.trim(), company: form.company.trim(), amount: Math.round(Number(form.amount)), stage: form.stage, owner: "ML", due: "À planifier", confidence: 30 };
+    let created = false;
     try {
       const response = await fetch("/api/opportunities", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(form) });
-      if (!response.ok) throw new Error("unavailable");
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(payload?.error ?? "Création refusée.");
+      }
       const payload = (await response.json()) as { item: { id: number } };
       draft.id = `p${payload.item.id}`;
       draft.saved = true;
+      created = true;
       toast.success("Opportunité enregistrée et auditée");
-    } catch {
-      toast.warning("Opportunité ajoutée à la vue de travail ; synchronisation à reprendre.");
-    } finally {
-      setDeals((current) => [draft, ...current]);
-      pushAudit({ action: "Opportunité créée", detail: `${draft.name} · ${euros.format(draft.amount)}`, actor: "Mélanie Laurent", time: "À l’instant", tone: "green" });
-      setForm({ name: "", company: "", amount: "", stage: "qualification" });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Création refusée.");
       setSaving(false);
-      setCreateOpen(false);
-      setView("pipeline");
+      return;
+    } finally {
+      if (created) {
+        setDeals((current) => [draft, ...current]);
+        pushAudit({ action: "Opportunité créée", detail: `${draft.name} · ${euros.format(draft.amount)}`, actor: user.displayName, time: "À l’instant", tone: "green" });
+        setForm({ name: "", company: "", amount: "", stage: "qualification" });
+        setCreateOpen(false);
+        setView("pipeline");
+      }
+      setSaving(false);
     }
   };
 
@@ -657,7 +691,11 @@ export function CRMShell() {
     pushAudit({ action: "Opportunité déplacée", detail: `${deal.name} → ${nextStage.label}`, actor: "Mélanie Laurent", time: "À l’instant", tone: "blue" });
     toast.success(`${deal.name} passe à « ${nextStage.label} »`);
     if (deal.saved) {
-      fetch("/api/opportunities", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: Number(deal.id.slice(1)), stage: nextStage.id }) }).catch(() => undefined);
+      fetch("/api/opportunities", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: Number(deal.id.slice(1)), stage: nextStage.id }) })
+        .then((response) => {
+          if (!response.ok) throw new Error("Mise à jour refusée côté serveur.");
+        })
+        .catch((error) => toast.error(error instanceof Error ? error.message : "Mise à jour refusée."));
     }
   };
 
@@ -666,10 +704,10 @@ export function CRMShell() {
     if (view === "pipeline") return <PipelineView deals={deals} onAdvance={advanceDeal} onOpenCreate={() => setCreateOpen(true)} query={query} />;
     if (view === "objects") return <ObjectsView />;
     if (view === "automations") return <AutomationsView />;
-    if (view === "rights") return <RightsView />;
-    if (view === "modules") return <ModulesView />;
-    if (view === "data") return <DataView deals={deals} onAudit={pushAudit} />;
-    return <AuditView items={audit} />;
+    if (view === "rights") return canAdminister ? <RightsView /> : <DashboardView onNavigate={setView} />;
+    if (view === "modules") return canAdminister ? <ModulesView /> : <DashboardView onNavigate={setView} />;
+    if (view === "data") return canAdminister ? <DataView deals={deals} onAudit={pushAudit} /> : <DashboardView onNavigate={setView} />;
+    return canAdminister ? <AuditView items={audit} /> : <DashboardView onNavigate={setView} />;
   };
 
   return (
@@ -680,9 +718,9 @@ export function CRMShell() {
         </SidebarHeader>
         <SidebarContent>
           <SidebarGroup><SidebarGroupLabel>ESPACE DE TRAVAIL</SidebarGroupLabel><SidebarGroupContent><SidebarMenu>{navigation.map((item) => { const Icon = item.icon; return <SidebarMenuItem key={item.id}><SidebarMenuButton tooltip={item.label} isActive={view === item.id} onClick={() => setView(item.id)}><Icon /><span>{item.label}</span>{item.badge ? <span className="ml-auto rounded-md bg-blue-100 px-1.5 py-0.5 text-[11px] font-semibold text-blue-700 group-data-[collapsible=icon]:hidden">{item.badge}</span> : null}</SidebarMenuButton></SidebarMenuItem>; })}</SidebarMenu></SidebarGroupContent></SidebarGroup>
-          <SidebarGroup><SidebarGroupLabel>ADMINISTRATION</SidebarGroupLabel><SidebarGroupContent><SidebarMenu>{adminNavigation.map((item) => { const Icon = item.icon; return <SidebarMenuItem key={item.id}><SidebarMenuButton tooltip={item.label} isActive={view === item.id} onClick={() => setView(item.id)}><Icon /><span>{item.label}</span></SidebarMenuButton></SidebarMenuItem>; })}</SidebarMenu></SidebarGroupContent></SidebarGroup>
+          {canAdminister ? <SidebarGroup><SidebarGroupLabel>ADMINISTRATION</SidebarGroupLabel><SidebarGroupContent><SidebarMenu>{adminNavigation.map((item) => { const Icon = item.icon; return <SidebarMenuItem key={item.id}><SidebarMenuButton tooltip={item.label} isActive={view === item.id} onClick={() => setView(item.id)}><Icon /><span>{item.label}</span></SidebarMenuButton></SidebarMenuItem>; })}</SidebarMenu></SidebarGroupContent></SidebarGroup> : null}
         </SidebarContent>
-        <SidebarFooter className="p-3"><button className="profile-card"><span className="profile-avatar">ML</span><span className="min-w-0 flex-1 text-left group-data-[collapsible=icon]:hidden"><strong>Mélanie Laurent</strong><small>Administratrice CRM</small></span><ChevronDown className="size-4 shrink-0 text-slate-400 group-data-[collapsible=icon]:hidden" /></button></SidebarFooter>
+        <SidebarFooter className="p-3"><button className="profile-card"><span className="profile-avatar">{user.displayName.slice(0, 2).toUpperCase()}</span><span className="min-w-0 flex-1 text-left group-data-[collapsible=icon]:hidden"><strong>{user.displayName}</strong><small>{sessionUser?.role === "admin" ? "Administrateur" : "Utilisateur"} · {user.email}</small></span><ChevronDown className="size-4 shrink-0 text-slate-400 group-data-[collapsible=icon]:hidden" /></button></SidebarFooter>
         <SidebarRail />
       </Sidebar>
 
