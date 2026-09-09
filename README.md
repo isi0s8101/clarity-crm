@@ -1,4 +1,4 @@
-# Clarity CRM — clarity-crm_v0.1
+# Clarity CRM — clarity-crm_v0.2
 
 CRM professionnel modulaire conçu pour piloter les ventes, configurer les objets métier, automatiser les tâches et gouverner les accès sans complexité excessive.
 
@@ -29,3 +29,14 @@ Fondations ajoutées :
 - export CSV servi par API protégée.
 
 Sauvegarde/restauration : avant publication en production, conserver l’archive source Git et l’état D1 courant. Les migrations Drizzle sont additives pour préserver les opportunités et audits existants.
+
+## clarity-crm_v0.2
+
+Administration réelle ajoutée :
+
+- API admin protégée pour membres, équipes, invitations et permissions ;
+- écran Droits & équipes branché sur les données persistantes ;
+- création d’équipe et invitation utilisateur auditables ;
+- modification de rôle/équipe avec garde-fou contre l’auto-rétrogradation admin ;
+- modification de périmètre de permission avec refus d’administration pour le profil utilisateur ;
+- migration D1 additive pour les invitations.

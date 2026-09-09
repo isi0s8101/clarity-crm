@@ -10,7 +10,6 @@ import {
   Boxes,
   Building2,
   Calendar,
-  Check,
   CheckCircle2,
   ChevronDown,
   Circle,
@@ -21,7 +20,6 @@ import {
   History,
   Key,
   LayoutDashboard,
-  Lock,
   MoreHorizontal,
   Plus,
   RefreshCw,
@@ -147,6 +145,42 @@ type SessionUser = CRMUser & {
   role: "admin" | "user";
   tenantId: string;
   teamId: string;
+};
+
+type AdminTeam = {
+  id: string;
+  name: string;
+};
+
+type AdminMember = {
+  userId: string;
+  email: string;
+  displayName: string;
+  role: "admin" | "user";
+  teamId: string | null;
+};
+
+type AdminPermission = {
+  id: string;
+  role: "admin" | "user";
+  object: string;
+  action: string;
+  scope: "personal" | "team" | "tenant";
+};
+
+type AdminInvitation = {
+  id: string;
+  email: string;
+  role: "admin" | "user";
+  teamId: string | null;
+  status: string;
+};
+
+type AdminAccessPayload = {
+  teams: AdminTeam[];
+  members: AdminMember[];
+  permissions: AdminPermission[];
+  invitations: AdminInvitation[];
 };
 
 const navigation = [
@@ -473,25 +507,124 @@ function AutomationsView() {
 }
 
 function RightsView() {
-  const [custom, setCustom] = useState(false);
-  const teams = [
-    { name: "Administrateurs CRM", members: 3, scope: "Configuration complète", write: true, export: true },
-    { name: "Équipe commerciale", members: 18, scope: "Portefeuille + équipe", write: true, export: true },
-    { name: "Support clients", members: 12, scope: "Sociétés et contacts", write: true, export: false },
-    { name: "Direction", members: 5, scope: "Lecture globale", write: false, export: true },
-  ];
+  const [access, setAccess] = useState<AdminAccessPayload | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [invite, setInvite] = useState({ email: "", role: "user" as "admin" | "user", teamId: "" });
+  const [teamName, setTeamName] = useState("");
+
+  const refresh = (showLoading = true) => {
+    if (showLoading) setLoading(true);
+    fetch("/api/admin/access")
+      .then(async (response): Promise<AdminAccessPayload> => {
+        if (!response.ok) throw new Error("Administration refusée.");
+        return response.json() as Promise<AdminAccessPayload>;
+      })
+      .then(setAccess)
+      .catch((error) => toast.error(error instanceof Error ? error.message : "Administration indisponible."))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    fetch("/api/admin/access")
+      .then(async (response): Promise<AdminAccessPayload> => {
+        if (!response.ok) throw new Error("Administration refusée.");
+        return response.json() as Promise<AdminAccessPayload>;
+      })
+      .then(setAccess)
+      .catch((error) => toast.error(error instanceof Error ? error.message : "Administration indisponible."))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const createTeam = async () => {
+    if (!teamName.trim()) return;
+    const response = await fetch("/api/admin/access", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ intent: "create-team", name: teamName }),
+    });
+    if (!response.ok) {
+      toast.error("Création d’équipe refusée.");
+      return;
+    }
+    setTeamName("");
+    toast.success("Équipe créée");
+    refresh();
+  };
+
+  const inviteUser = async () => {
+    const response = await fetch("/api/admin/access", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ intent: "invite-user", ...invite, teamId: invite.teamId || null }),
+    });
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+      toast.error(payload?.error ?? "Invitation refusée.");
+      return;
+    }
+    setInvite({ email: "", role: "user", teamId: "" });
+    toast.success("Invitation enregistrée");
+    refresh();
+  };
+
+  const updateMember = async (member: AdminMember, patch: Partial<Pick<AdminMember, "role" | "teamId">>) => {
+    const response = await fetch("/api/admin/access", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        intent: "update-member",
+        userId: member.userId,
+        role: patch.role ?? member.role,
+        teamId: patch.teamId ?? member.teamId,
+      }),
+    });
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+      toast.error(payload?.error ?? "Mise à jour refusée.");
+      return;
+    }
+    toast.success("Membre mis à jour");
+    refresh();
+  };
+
+  const updatePermission = async (permission: AdminPermission, scope: AdminPermission["scope"]) => {
+    const response = await fetch("/api/admin/access", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ intent: "update-permission", ...permission, scope }),
+    });
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+      toast.error(payload?.error ?? "Permission refusée.");
+      return;
+    }
+    toast.success("Permission mise à jour");
+    refresh();
+  };
+
+  const teams = access?.teams ?? [];
+  const members = access?.members ?? [];
+  const permissions = access?.permissions ?? [];
+  const invitations = access?.invitations ?? [];
+
   return (
     <div className="space-y-5">
       <Panel>
-        <PanelTitle title="Matrice des rôles" description="Les droits hérités sont visibles ; les exceptions restent rares et justifiées." action={<Button size="sm" onClick={() => toast.info("Un nouveau rôle démarre avec le minimum de droits.")}><Plus className="size-4" />Nouveau rôle</Button>} />
+        <PanelTitle title="Membres et rôles" description="Les changements sont persistants, auditables et appliqués côté serveur." action={<Button size="sm" variant="outline" onClick={() => refresh()}><RefreshCw className="size-4" />Actualiser</Button>} />
         <div className="overflow-hidden rounded-xl border border-slate-200">
-          <Table><TableHeader><TableRow><TableHead>Rôle</TableHead><TableHead className="hidden md:table-cell">Périmètre</TableHead><TableHead>Modifier</TableHead><TableHead>Exporter</TableHead><TableHead className="w-12" /></TableRow></TableHeader><TableBody>{teams.map((team) => <TableRow key={team.name}><TableCell><div><strong className="font-medium text-slate-900">{team.name}</strong><p className="text-xs text-slate-500">{team.members} membres</p></div></TableCell><TableCell className="hidden text-slate-600 md:table-cell">{team.scope}</TableCell><TableCell>{team.write ? <Check className="size-4 text-emerald-600" /> : <span className="text-slate-300">—</span>}</TableCell><TableCell>{team.export ? <Check className="size-4 text-emerald-600" /> : <Lock className="size-4 text-slate-400" />}</TableCell><TableCell><Button variant="ghost" size="icon"><MoreHorizontal className="size-4" /></Button></TableCell></TableRow>)}</TableBody></Table>
+          <Table><TableHeader><TableRow><TableHead>Membre</TableHead><TableHead>Rôle</TableHead><TableHead className="hidden md:table-cell">Équipe</TableHead><TableHead>État</TableHead></TableRow></TableHeader><TableBody>{loading ? <TableRow><TableCell colSpan={4}>Chargement…</TableCell></TableRow> : members.map((member) => <TableRow key={member.userId}><TableCell><div><strong className="font-medium text-slate-900">{member.displayName}</strong><p className="text-xs text-slate-500">{member.email}</p></div></TableCell><TableCell><Select value={member.role} onValueChange={(role) => updateMember(member, { role: role as "admin" | "user" })}><SelectTrigger className="w-[145px]"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="admin">Administrateur</SelectItem><SelectItem value="user">Utilisateur</SelectItem></SelectContent></Select></TableCell><TableCell className="hidden md:table-cell"><Select value={member.teamId ?? "none"} onValueChange={(teamId) => updateMember(member, { teamId: teamId === "none" ? null : teamId })}><SelectTrigger className="w-[190px]"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">Aucune équipe</SelectItem>{teams.map((team) => <SelectItem key={team.id} value={team.id}>{team.name}</SelectItem>)}</SelectContent></Select></TableCell><TableCell><StatusPill tone={member.role === "admin" ? "green" : "blue"}>{member.role === "admin" ? "Admin" : "Utilisateur"}</StatusPill></TableCell></TableRow>)}</TableBody></Table>
         </div>
       </Panel>
       <div className="grid gap-5 lg:grid-cols-2">
-        <Panel><PanelTitle title="Contrôles sensibles" description="Protection renforcée sur les actions à fort impact." /><div className="space-y-4">{[["Validation avant export massif", "Double confirmation au-delà de 1 000 lignes", true], ["Suppression définitive", "Réservée aux administrateurs CRM", true], ["Exceptions individuelles", "À utiliser uniquement si un rôle ne suffit pas", custom]].map(([name, text, checked]) => <div className="setting-line" key={String(name)}><div><p>{String(name)}</p><span>{String(text)}</span></div><Switch checked={Boolean(checked)} onCheckedChange={String(name).startsWith("Exceptions") ? setCustom : undefined} /></div>)}</div></Panel>
-        <Panel><PanelTitle title="Principe appliqué" /><div className="least-privilege"><span><ShieldCheck className="size-6" /></span><div><h3>Moindre privilège par défaut</h3><p>Un nouveau rôle ne reçoit aucun droit sensible. Les autorisations sont ajoutées par capacité métier, avec simulation avant publication.</p></div></div><div className="mt-4 grid grid-cols-3 gap-2 text-center">{[["8", "Rôles"], ["2", "Exceptions"], ["0", "Conflit"]].map(([value, label]) => <div className="mini-stat" key={label}><strong>{value}</strong><span>{label}</span></div>)}</div></Panel>
+        <Panel><PanelTitle title="Inviter un utilisateur" description="L’invitation prépare rôle et équipe avant la première connexion." /><div className="space-y-3"><Input value={invite.email} onChange={(event) => setInvite({ ...invite, email: event.target.value })} placeholder="email@societe.fr" /><div className="grid grid-cols-2 gap-3"><Select value={invite.role} onValueChange={(role) => setInvite({ ...invite, role: role as "admin" | "user" })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="user">Utilisateur</SelectItem><SelectItem value="admin">Administrateur</SelectItem></SelectContent></Select><Select value={invite.teamId || "none"} onValueChange={(teamId) => setInvite({ ...invite, teamId: teamId === "none" ? "" : teamId })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">Aucune équipe</SelectItem>{teams.map((team) => <SelectItem key={team.id} value={team.id}>{team.name}</SelectItem>)}</SelectContent></Select></div><Button onClick={inviteUser} className="w-full"><Plus className="size-4" />Enregistrer l’invitation</Button></div><div className="mt-5 space-y-2">{invitations.slice(0, 4).map((item) => <div className="setting-line" key={item.id}><div><p>{item.email}</p><span>{item.role === "admin" ? "Administrateur" : "Utilisateur"} · {item.status}</span></div><StatusPill tone="amber">En attente</StatusPill></div>)}</div></Panel>
+        <Panel><PanelTitle title="Équipes" description="Les équipes servent aux périmètres de lecture et modification." /><div className="flex gap-2"><Input value={teamName} onChange={(event) => setTeamName(event.target.value)} placeholder="Nouvelle équipe" /><Button onClick={createTeam}><Plus className="size-4" /></Button></div><div className="mt-4 space-y-2">{teams.map((team) => <div className="setting-line" key={team.id}><div><p>{team.name}</p><span>{members.filter((member) => member.teamId === team.id).length} membre(s)</span></div><Users className="size-4 text-slate-400" /></div>)}</div></Panel>
       </div>
+      <Panel>
+        <PanelTitle title="Permissions persistantes" description="Objet, action et périmètre sont stockés et appliqués par les API." />
+        <div className="overflow-hidden rounded-xl border border-slate-200">
+          <Table><TableHeader><TableRow><TableHead>Profil</TableHead><TableHead>Objet</TableHead><TableHead>Action</TableHead><TableHead>Périmètre</TableHead></TableRow></TableHeader><TableBody>{permissions.filter((permission) => ["opportunity", "audit", "admin"].includes(permission.object)).slice(0, 12).map((permission) => <TableRow key={permission.id}><TableCell>{permission.role === "admin" ? "Administrateur" : "Utilisateur"}</TableCell><TableCell>{permission.object}</TableCell><TableCell>{permission.action}</TableCell><TableCell><Select value={permission.scope} onValueChange={(scope) => updatePermission(permission, scope as AdminPermission["scope"])}><SelectTrigger className="w-[135px]"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="personal">Personnel</SelectItem><SelectItem value="team">Équipe</SelectItem><SelectItem value="tenant">Tenant</SelectItem></SelectContent></Select></TableCell></TableRow>)}</TableBody></Table>
+        </div>
+      </Panel>
     </div>
   );
 }

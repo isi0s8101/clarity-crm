@@ -22,6 +22,29 @@ export const teams = sqliteTable("teams", {
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
+export const invitations = sqliteTable(
+  "invitations",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull().references(() => organizations.id),
+    email: text("email").notNull(),
+    role: text("role").notNull().default("user"),
+    teamId: text("team_id").references(() => teams.id),
+    status: text("status").notNull().default("pending"),
+    invitedBy: text("invited_by").notNull().references(() => users.id),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    uniqueIndex("idx_invitations_tenant_email_pending").on(
+      table.tenantId,
+      table.email,
+      table.status,
+    ),
+    index("idx_invitations_tenant_status").on(table.tenantId, table.status),
+  ],
+);
+
 export const memberships = sqliteTable(
   "memberships",
   {

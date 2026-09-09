@@ -196,6 +196,10 @@ export async function requirePermission(
   return scope;
 }
 
+export async function requireAdmin(actor: AuthContext) {
+  await requirePermission(actor, "admin", "administer");
+}
+
 export async function getPermissionScope(
   actor: AuthContext,
   object: string,
