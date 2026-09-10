@@ -51,8 +51,14 @@ const DEFAULT_TENANT_ID = "default";
 const DEFAULT_TENANT_NAME = "Clarity CRM";
 const DEFAULT_TEAM_ID = "default-sales";
 const DEFAULT_TEAM_NAME = "Équipe commerciale";
+const PERMISSION_INSERT_BATCH_SIZE = 40;
 
-const CRM_PERMISSION_OBJECTS = [...CORE_RECORD_TYPES, "crm_record"];
+// L'opportunité conserve ses permissions historiques explicites pour compatibilité.
+// Les autres objets utilisent les mêmes invariants plus le fallback crm_record pour les objets personnalisés.
+const CRM_PERMISSION_OBJECTS = [
+  ...CORE_RECORD_TYPES.filter((type) => type !== "opportunity"),
+  "crm_record",
+];
 
 const defaultPermissions: Record<
   AuthContext["role"],
@@ -439,7 +445,10 @@ async function seedRolePermissions(tenantId: string) {
     })),
   );
 
-  await db.insert(rolePermissions).values(values).onConflictDoNothing();
+  for (let offset = 0; offset < values.length; offset += PERMISSION_INSERT_BATCH_SIZE) {
+    const batch = values.slice(offset, offset + PERMISSION_INSERT_BATCH_SIZE);
+    await db.insert(rolePermissions).values(batch).onConflictDoNothing();
+  }
 }
 
 function safeDecodeURIComponent(value: string) {
