@@ -6,7 +6,7 @@ set -Eeuo pipefail
 # Runtime visé : VM de développement/intégration locale.
 # - clone/mise à jour Git reproductible ;
 # - Node.js >= 22.13 ;
-# - npm ci + lint + tests + TypeScript + build ;
+# - install:ci + lint + tests + TypeScript + build ;
 # - migrations D1 locales persistantes ;
 # - service systemd sous compte dédié ;
 # - écoute loopback 127.0.0.1:5173 ;
@@ -148,6 +148,10 @@ ensure_account() {
   install -d -m 0750 "$BACKUP_ROOT"
 }
 
+require_clean_tree() {
+  [[ -z "$(run_app git -C "$APP_DIR" status --porcelain)" ]] || die "Dépôt local modifié. Commit/stash/reset requis avant déploiement ou mise à jour."
+}
+
 clone_or_validate_repo() {
   if [[ ! -e "$APP_DIR" ]]; then
     log INFO "git clone ${REPO_URL} (${BRANCH}) -> ${APP_DIR}"
@@ -161,10 +165,7 @@ clone_or_validate_repo() {
   local remote
   remote="$(run_app git -C "$APP_DIR" remote get-url origin)"
   [[ "$remote" == "$REPO_URL" ]] || die "Remote origin inattendu: $remote"
-}
-
-require_clean_tree() {
-  [[ -z "$(run_app git -C "$APP_DIR" status --porcelain)" ]] || die "Dépôt local modifié. Commit/stash/reset requis avant mise à jour."
+  require_clean_tree
 }
 
 backup_state() {
@@ -185,7 +186,6 @@ backup_state() {
 }
 
 update_repo() {
-  require_clean_tree
   systemctl stop "$SERVICE_NAME" 2>/dev/null || true
   backup_state
   log INFO "Mise à jour Git fast-forward uniquement."
@@ -197,14 +197,18 @@ update_repo() {
 verify_source() {
   [[ -f "$APP_DIR/package.json" ]] || die "package.json absent."
   [[ -f "$APP_DIR/package-lock.json" ]] || die "package-lock.json absent."
+  [[ -f "$APP_DIR/scripts/install-ci.mjs" ]] || die "scripts/install-ci.mjs absent."
   local required
   required="$(run_app node -e 'const p=require(process.argv[1]); process.stdout.write(String(p.engines?.node || ""));' "$APP_DIR/package.json")"
   log INFO "Contrainte Node déclarée par le dépôt: ${required:-aucune}."
 }
 
 install_and_validate() {
-  log INFO "npm ci"
-  run_app npm --prefix "$APP_DIR" ci --workspaces=false
+  log INFO "npm run install:ci"
+  (
+    cd "$APP_DIR"
+    run_app npm run install:ci
+  )
 
   log INFO "npm run lint"
   run_app npm --prefix "$APP_DIR" run lint
