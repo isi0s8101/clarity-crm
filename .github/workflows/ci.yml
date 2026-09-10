@@ -38,6 +38,8 @@ jobs:
           test -x scripts/ci-e2e-posix.sh
           bash -n scripts/deploy-posix-vm.sh
           bash -n scripts/ci-e2e-posix.sh
+          bash -n scripts/ci-legacy-d1-migration.sh
+          node --check scripts/migrate-legacy-d1.mjs
       - run: npm ci
       - run: npm run lint
       - run: npm test
@@ -50,3 +52,5 @@ jobs:
       - run: bash scripts/ci-e2e-posix.sh
         env:
           NODE_ENV: production
+      - name: Validate legacy D1 to PostgreSQL migration
+        run: bash scripts/ci-legacy-d1-migration.sh
