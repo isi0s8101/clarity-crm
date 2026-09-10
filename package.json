@@ -17,6 +17,7 @@
     "test": "node lib/auth-crypto.test.mjs && node lib/authz.test.mjs && node lib/admin-access.test.mjs && node lib/crm-policy.test.mjs && node lib/migrations.test.mjs && node lib/postgres-migrations.test.mjs",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node scripts/migrate-postgres.mjs",
+    "db:migrate:legacy": "node scripts/migrate-legacy-d1.mjs",
     "bootstrap:admin": "node scripts/bootstrap-admin.mjs"
   },
   "dependencies": {
