@@ -23,7 +23,6 @@ jobs:
       CLARITY_ADMIN_EMAIL: admin@clarity.test
       CLARITY_ADMIN_PASSWORD: CI-password-2026-strong
       CLARITY_COOKIE_SECURE: "0"
-      NODE_ENV: production
       PORT: "5173"
     steps:
       - uses: actions/checkout@v4
@@ -44,6 +43,10 @@ jobs:
       - run: npm test
       - run: npx tsc --noEmit
       - run: npm run build
+        env:
+          NODE_ENV: production
       - run: npm run db:migrate
       - run: npm run bootstrap:admin
       - run: bash scripts/ci-e2e-posix.sh
+        env:
+          NODE_ENV: production
