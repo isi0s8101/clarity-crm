@@ -3,14 +3,13 @@ import { and, eq } from "drizzle-orm";
 
 import { getDb } from "@/db";
 import { invitations, memberships, organizations } from "@/db/schema";
-import {
-  authErrorResponse,
-  readAuthenticatedIdentity,
-} from "@/lib/authz";
+import { authErrorResponse, readAuthenticatedIdentity } from "@/lib/authz";
+
+export const runtime = "nodejs";
 
 export async function GET(request: NextRequest) {
   try {
-    const identity = readAuthenticatedIdentity(request);
+    const identity = await readAuthenticatedIdentity(request);
     const db = getDb();
 
     const [memberRows, invitationRows] = await Promise.all([
@@ -35,12 +34,7 @@ export async function GET(request: NextRequest) {
         })
         .from(invitations)
         .innerJoin(organizations, eq(organizations.id, invitations.tenantId))
-        .where(
-          and(
-            eq(invitations.email, identity.email),
-            eq(invitations.status, "pending"),
-          ),
-        ),
+        .where(and(eq(invitations.email, identity.email), eq(invitations.status, "pending"))),
     ]);
 
     const items = new Map<
@@ -65,7 +59,6 @@ export async function GET(request: NextRequest) {
         status: row.status,
       });
     }
-
     for (const row of invitationRows) {
       if (items.has(row.tenantId)) continue;
       items.set(row.tenantId, {
@@ -78,7 +71,7 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    return NextResponse.json({ items: [...items.values()] });
+    return NextResponse.json({ items: [...items.values()] }, { headers: { "cache-control": "no-store" } });
   } catch (error) {
     const authResponse = authErrorResponse(error);
     if (authResponse) return authResponse;
