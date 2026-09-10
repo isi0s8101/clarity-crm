@@ -23,7 +23,6 @@ const TABLES = [
   { name: "audit_events", columns: ["id", "tenant_id", "team_id", "actor_id", "actor_email", "action", "resource_type", "resource_id", "result", "before", "after", "entity_type", "entity_id", "details", "created_at"], serial: true },
 ];
 
-const TABLE_NAMES = new Set(TABLES.map((table) => table.name));
 const EXTENSIONS = new Set([".sqlite", ".sqlite3", ".db"]);
 const args = process.argv.slice(2);
 const apply = args.includes("--apply");
@@ -180,9 +179,11 @@ const inspections = files.map(inspectDatabase);
 console.log("=== D1 détectées ===");
 for (const item of inspections) console.log(`${item.file} core=${item.core ? "yes" : "no"} recognized=${item.recognized} rows=${item.rows}`);
 const selected = selectSource(inspections);
+const missingTables = TABLES.filter((table) => selected.counts[table.name] === undefined).map((table) => table.name);
+if (missingTables.length) throw new Error(`Schéma D1 legacy incomplet; tables absentes: ${missingTables.join(", ")}`);
 console.log(`SOURCE=${selected.file}`);
 console.log(`SOURCE_RECOGNIZED_ROWS=${selected.rows}`);
-for (const table of TABLES) console.log(`${table.name}=${selected.counts[table.name] ?? 0}`);
+for (const table of TABLES) console.log(`${table.name}=${selected.counts[table.name]}`);
 
 const db = new DatabaseSync(selected.file, { readOnly: true });
 try {
@@ -212,7 +213,7 @@ try {
         if (imported !== selected.rows) throw new Error(`Compteur importé inattendu: source=${selected.rows}, import=${imported}`);
         for (const table of TABLES) {
           const target = await client.query(`SELECT COUNT(*)::int AS count FROM ${table.name}`);
-          const expected = selected.counts[table.name] ?? 0;
+          const expected = selected.counts[table.name];
           if (Number(target.rows[0]?.count ?? 0) !== expected) throw new Error(`Vérification ${table.name}: attendu=${expected}, obtenu=${target.rows[0]?.count}`);
         }
         console.log(`IMPORTED_ROWS=${imported}`);
