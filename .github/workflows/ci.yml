@@ -15,3 +15,4 @@ jobs:
       - run: npx tsc --noEmit
       - run: npm run build
       - run: bash scripts/ci-e2e-foundations.sh
+      - run: bash scripts/ci-e2e-v1.sh
