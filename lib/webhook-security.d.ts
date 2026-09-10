@@ -21,3 +21,13 @@ export function hostMatchesAllowedWebhookHosts(hostname: string, allowedHosts?: 
 export function parseAllowedHosts(value?: string | string[] | null): string[];
 export function isPublicIpAddress(value: unknown): boolean;
 export function readLimitedResponseText(response: Response, limitBytes?: number): Promise<string>;
+export function dispatchWebhookRequest(
+  target: Extract<WebhookTargetValidation, { ok: true }>,
+  options?: {
+    method?: string;
+    headers?: Record<string, string>;
+    body?: string;
+    timeoutMs?: number;
+    responseLimitBytes?: number;
+  },
+): Promise<{ ok: boolean; status: number; responseText: string }>;

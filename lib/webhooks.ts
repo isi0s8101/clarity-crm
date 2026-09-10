@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { crmConfigurations, webhookDeliveries } from "@/db/schema";
 import type { AuthContext } from "@/lib/authz";
-import { readLimitedResponseText, validateWebhookTargetUrl } from "@/lib/webhook-security.js";
+import { dispatchWebhookRequest, validateWebhookTargetUrl } from "@/lib/webhook-security.js";
 
 export type WebhookEvent = "record.created" | "record.updated" | "record.archived";
 
@@ -43,10 +43,6 @@ export async function dispatchOutboundWebhooks(
 
     const deliveryId = crypto.randomUUID();
     const allowPrivate = readEnv("CLARITY_WEBHOOK_ALLOW_PRIVATE_E2E") === "1";
-    const urlPolicy = await validateWebhookTargetUrl(definition.url, {
-      allowPrivate,
-      allowedHosts: readEnv("CLARITY_WEBHOOK_ALLOWED_HOSTS"),
-    });
     const payload = JSON.stringify({
       id: deliveryId,
       event,
@@ -54,6 +50,26 @@ export async function dispatchOutboundWebhooks(
       occurredAt: new Date().toISOString(),
       record,
     });
+
+    let urlPolicy;
+    try {
+      urlPolicy = await validateWebhookTargetUrl(definition.url, {
+        allowPrivate,
+        allowedHosts: readEnv("CLARITY_WEBHOOK_ALLOWED_HOSTS"),
+      });
+    } catch (error) {
+      await saveDelivery({
+        id: deliveryId,
+        tenantId: actor.tenantId,
+        webhookId: config.id,
+        direction: "outbound",
+        event,
+        status: "failure",
+        requestBody: payload,
+        error: error instanceof Error ? error.message.slice(0, 2000) : "Validation webhook impossible.",
+      });
+      continue;
+    }
 
     if (!urlPolicy.ok) {
       await saveDelivery({
@@ -72,7 +88,7 @@ export async function dispatchOutboundWebhooks(
     try {
       const secret = await deriveWebhookSecret(actor.tenantId, definition.key);
       const signature = await signBody(payload, secret);
-      const response = await fetch(urlPolicy.url, {
+      const response = await dispatchWebhookRequest(urlPolicy, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -82,10 +98,9 @@ export async function dispatchOutboundWebhooks(
           "x-clarity-signature": `sha256=${signature}`,
         },
         body: payload,
-        redirect: "manual",
-        signal: AbortSignal.timeout(5000),
+        timeoutMs: 5000,
+        responseLimitBytes: 4096,
       });
-      const responseText = await readLimitedResponseText(response, 4096);
       await saveDelivery({
         id: deliveryId,
         tenantId: actor.tenantId,
@@ -95,7 +110,7 @@ export async function dispatchOutboundWebhooks(
         status: response.ok ? "success" : "failure",
         requestBody: payload,
         responseCode: response.status,
-        responseBody: responseText,
+        responseBody: response.responseText,
         error: response.ok ? "" : `HTTP ${response.status}`,
       });
     } catch (error) {
