@@ -140,7 +140,7 @@ request_expect 200 "${USER_A_HEADERS[@]}" -b "$USER_A_COOKIE" "$BASE_URL/api/ses
 # User B n'a qu'un tenant et peut accepter son invitation sans sélecteur explicite.
 request_expect 200 "${USER_B_HEADERS[@]}" "$BASE_URL/api/session"
 
-# User A peut ensuite accepter et sélectionner tenant-b, puis revenir à default.
+# User A peut ensuite accepter et sélectionner tenant-b.
 request_expect 200 "${USER_A_HEADERS[@]}" \
   -b "$USER_A_COOKIE" -c "$USER_A_COOKIE" \
   -H 'content-type: application/json' \
@@ -150,6 +150,15 @@ request_expect 200 "${USER_A_HEADERS[@]}" \
 node -e 'const x=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); if(x.user?.tenantId!=="tenant-b"||x.user?.teamId!=="team-b") process.exit(1)' "$BODY_FILE"
 request_expect 200 "${USER_A_HEADERS[@]}" -b "$USER_A_COOKIE" "$BASE_URL/api/session"
 
+# Crée une ressource dans tenant-b et mémorise son ID pour tenter ensuite un accès depuis default.
+request_expect 201 "${USER_A_HEADERS[@]}" -b "$USER_A_COOKIE" \
+  -H 'content-type: application/json' \
+  -X POST \
+  --data '{"name":"TENANT-B-SECRET","company":"Tenant B","amount":9999,"stage":"qualification"}' \
+  "$BASE_URL/api/opportunities"
+TENANT_B_OPPORTUNITY_ID="$(node -e 'const x=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); if(!x.item?.id) process.exit(1); process.stdout.write(String(x.item.id))' "$BODY_FILE")"
+
+# Retour à default.
 request_expect 200 "${USER_A_HEADERS[@]}" \
   -b "$USER_A_COOKIE" -c "$USER_A_COOKIE" \
   -H 'content-type: application/json' \
@@ -160,6 +169,15 @@ node -e 'const x=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));
 
 # Avec deux memberships actives, l'absence de cookie/header doit rester refusée.
 request_expect 403 "${USER_A_HEADERS[@]}" "$BASE_URL/api/session"
+
+# La ressource tenant-b ne doit ni apparaître dans la liste default, ni être modifiable par son ID.
+request_expect 200 "${USER_A_HEADERS[@]}" -b "$USER_A_COOKIE" "$BASE_URL/api/opportunities"
+node -e 'const x=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); if((x.items||[]).some(i=>i.name==="TENANT-B-SECRET"||String(i.id)===process.argv[2])) process.exit(1)' "$BODY_FILE" "$TENANT_B_OPPORTUNITY_ID"
+request_expect 404 "${USER_A_HEADERS[@]}" -b "$USER_A_COOKIE" \
+  -H 'content-type: application/json' \
+  -X PATCH \
+  --data "{\"id\":$TENANT_B_OPPORTUNITY_ID,\"stage\":\"decouverte\"}" \
+  "$BASE_URL/api/opportunities"
 
 # Un utilisateur standard ne peut pas accéder à l'administration.
 request_expect 403 "${USER_A_HEADERS[@]}" -b "$USER_A_COOKIE" "$BASE_URL/api/admin/access"
@@ -200,9 +218,10 @@ node -e 'const x=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));
 request_expect 200 "${USER_B_HEADERS[@]}" "$BASE_URL/api/audit"
 node -e 'const x=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); if(!Array.isArray(x.items)||x.items.length<1||x.items.some(i=>i.teamId!=="team:default:support")) process.exit(1)' "$BODY_FILE"
 
-# Scope tenant de l'admin : les événements des deux équipes doivent être visibles.
+# Scope tenant de l'admin : les événements des deux équipes du tenant default doivent être visibles,
+# mais aucun événement de tenant-b ne doit traverser la frontière de tenant.
 request_expect 200 "${ADMIN_HEADERS[@]}" "$BASE_URL/api/audit"
-node -e 'const x=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); const actors=new Set((x.items||[]).map(i=>i.actorId)); if(!actors.has("e2e-user-a")||!actors.has("e2e-user-b")) process.exit(1)' "$BODY_FILE"
+node -e 'const x=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); const actors=new Set((x.items||[]).map(i=>i.actorId)); if(!actors.has("e2e-user-a")||!actors.has("e2e-user-b")||(x.items||[]).some(i=>i.tenantId!=="default")) process.exit(1)' "$BODY_FILE"
 
 # Désactivation effective du membership default de User A.
 request_expect 200 "${ADMIN_HEADERS[@]}" \
@@ -212,7 +231,8 @@ request_expect 200 "${ADMIN_HEADERS[@]}" \
   "$BASE_URL/api/admin/access"
 request_expect 403 "${USER_A_HEADERS[@]}" -b "$USER_A_COOKIE" "$BASE_URL/api/session"
 
-# La désactivation d'un tenant ne donne aucun droit supplémentaire sur un autre.
+# La désactivation d'un tenant ne donne aucun droit supplémentaire sur un autre ;
+# le membership tenant-b, lui, reste actif et sélectionnable.
 request_expect 200 "${USER_A_HEADERS[@]}" \
   -b "$USER_A_COOKIE" -c "$USER_A_COOKIE" \
   -H 'content-type: application/json' \
