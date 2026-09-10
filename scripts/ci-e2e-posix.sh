@@ -51,8 +51,9 @@ code="$(curl -sS -b "$COOKIE_JAR" -o /dev/null -w '%{http_code}' "$BASE/api/crm/
 [[ "$code" == 200 ]] || exit 1
 echo "[OK] CRM get/search/export"
 
-user_id="$(psql -X -Atqc "SELECT id FROM users WHERE email='${CLARITY_ADMIN_EMAIL//\'/\'\'}' LIMIT 1")"
-psql -X -v ON_ERROR_STOP=1 -v uid="$user_id" <<'SQL'
+[[ -n "${DATABASE_URL:-}" ]] || { echo "DATABASE_URL absent pour la recette PostgreSQL" >&2; exit 1; }
+user_id="$(psql -X --dbname="$DATABASE_URL" -Atqc "SELECT id FROM users WHERE email='${CLARITY_ADMIN_EMAIL//\'/\'\'}' LIMIT 1")"
+psql -X --dbname="$DATABASE_URL" -v ON_ERROR_STOP=1 -v uid="$user_id" <<'SQL'
 INSERT INTO organizations(id,name) VALUES ('ci-foreign','CI Foreign') ON CONFLICT DO NOTHING;
 INSERT INTO teams(id,tenant_id,name) VALUES ('ci-foreign-team','ci-foreign','Foreign') ON CONFLICT DO NOTHING;
 INSERT INTO crm_records(id,tenant_id,team_id,owner_id,type,title,data,status)
