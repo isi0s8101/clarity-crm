@@ -51,10 +51,8 @@ const DEFAULT_TENANT_ID = "default";
 const DEFAULT_TENANT_NAME = "Clarity CRM";
 const DEFAULT_TEAM_ID = "default-sales";
 const DEFAULT_TEAM_NAME = "Équipe commerciale";
-const PERMISSION_INSERT_BATCH_SIZE = 40;
+const PERMISSION_INSERT_BATCH_SIZE = 10;
 
-// L'opportunité conserve ses permissions historiques explicites pour compatibilité.
-// Les autres objets utilisent les mêmes invariants plus le fallback crm_record pour les objets personnalisés.
 const CRM_PERMISSION_OBJECTS = [
   ...CORE_RECORD_TYPES.filter((type) => type !== "opportunity"),
   "crm_record",
