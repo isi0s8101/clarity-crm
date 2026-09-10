@@ -20,7 +20,7 @@ if [[ ! -f "$CONFIG" ]]; then
   exit 1
 fi
 
-for migration in drizzle/[0-9][0-9][0-9][0-9]_*.sql; do
+for migration in legacy/d1/drizzle/[0-9][0-9][0-9][0-9]_*.sql; do
   echo "[E2E] apply $(basename "$migration")"
   npx wrangler d1 execute DB \
     --local \
@@ -241,4 +241,4 @@ request_expect 200 "${USER_A_HEADERS[@]}" \
   "$BASE_URL/api/session/tenant"
 node -e 'const x=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); if(x.user?.tenantId!=="tenant-b") process.exit(1)' "$BODY_FILE"
 
-echo "foundation HTTP/D1 E2E: ok"
+echo "foundation legacy D1 HTTP E2E: ok"

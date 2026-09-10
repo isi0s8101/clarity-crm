@@ -105,7 +105,7 @@ Administration réelle ajoutée :
 - création d'équipe et invitation utilisateur auditables ;
 - modification de rôle/équipe avec garde-fou contre l'auto-rétrogradation admin ;
 - modification de périmètre de permission avec refus d'administration pour le profil utilisateur ;
-- migration D1 additive pour les invitations.
+- migration legacy D1 additive pour les invitations.
 
 ### clarity-crm_v0.3
 

@@ -12,7 +12,7 @@ BASE_URL="http://127.0.0.1:8791"
 rm -rf "$STATE_DIR"
 mkdir -p "$STATE_DIR"
 
-for migration in drizzle/[0-9][0-9][0-9][0-9]_*.sql; do
+for migration in legacy/d1/drizzle/[0-9][0-9][0-9][0-9]_*.sql; do
   npx wrangler d1 execute DB --local --persist-to "$STATE_DIR" --config "$CONFIG" --file "$migration" >/dev/null
 done
 
@@ -101,4 +101,4 @@ expect 200 "${HEADERS[@]}" -H 'content-type: application/json' -X POST \
 node -e 'const x=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); if(x.contract?.data?.sourceQuoteId!==process.argv[2]||x.source?.data?.convertedContractId!==x.contract?.id) process.exit(1)' "$BODY_FILE" "$QUOTE_ID"
 
 [[ -n "$FORM_RECORD_ID" && -n "$PIPELINE_RECORD_ID" ]] || exit 1
-echo "clarity CRM v1 extensions HTTP/D1 E2E: ok"
+echo "clarity CRM v1 legacy D1 extensions HTTP E2E: ok"
