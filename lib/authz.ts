@@ -12,6 +12,7 @@ import {
 } from "@/db/schema";
 import { resolveAccessSelection } from "./access-resolution.js";
 import { canUseScopedResource, tenantSelectorFromHeaders } from "./authz-policy.js";
+import { CORE_RECORD_TYPES } from "./crm-policy.js";
 
 export type PermissionAction =
   | "read"
@@ -51,6 +52,8 @@ const DEFAULT_TENANT_NAME = "Clarity CRM";
 const DEFAULT_TEAM_ID = "default-sales";
 const DEFAULT_TEAM_NAME = "Équipe commerciale";
 
+const CRM_PERMISSION_OBJECTS = [...CORE_RECORD_TYPES, "crm_record"];
+
 const defaultPermissions: Record<
   AuthContext["role"],
   Array<[string, PermissionAction, PermissionScope]>
@@ -62,6 +65,28 @@ const defaultPermissions: Record<
     ["opportunity", "delete", "tenant"],
     ["opportunity", "export", "tenant"],
     ["opportunity", "administer", "tenant"],
+    ...CRM_PERMISSION_OBJECTS.flatMap((object) => [
+      [object, "read", "tenant"] as [string, PermissionAction, PermissionScope],
+      [object, "create", "tenant"] as [string, PermissionAction, PermissionScope],
+      [object, "update", "tenant"] as [string, PermissionAction, PermissionScope],
+      [object, "delete", "tenant"] as [string, PermissionAction, PermissionScope],
+      [object, "export", "tenant"] as [string, PermissionAction, PermissionScope],
+    ]),
+    ["crm_relation", "read", "tenant"],
+    ["crm_relation", "create", "tenant"],
+    ["crm_relation", "delete", "tenant"],
+    ["timeline", "read", "tenant"],
+    ["timeline", "create", "tenant"],
+    ["crm_configuration", "read", "tenant"],
+    ["crm_configuration", "administer", "tenant"],
+    ["automation", "read", "tenant"],
+    ["automation", "administer", "tenant"],
+    ["module", "read", "tenant"],
+    ["module", "administer", "tenant"],
+    ["template", "read", "tenant"],
+    ["template", "administer", "tenant"],
+    ["webhook", "read", "tenant"],
+    ["webhook", "administer", "tenant"],
     ["admin", "read", "tenant"],
     ["admin", "administer", "tenant"],
     ["audit", "read", "tenant"],
@@ -72,6 +97,22 @@ const defaultPermissions: Record<
     ["opportunity", "create", "team"],
     ["opportunity", "update", "team"],
     ["opportunity", "export", "personal"],
+    ...CRM_PERMISSION_OBJECTS.flatMap((object) => [
+      [object, "read", "team"] as [string, PermissionAction, PermissionScope],
+      [object, "create", "team"] as [string, PermissionAction, PermissionScope],
+      [object, "update", "team"] as [string, PermissionAction, PermissionScope],
+      [object, "delete", "personal"] as [string, PermissionAction, PermissionScope],
+      [object, "export", "personal"] as [string, PermissionAction, PermissionScope],
+    ]),
+    ["crm_relation", "read", "team"],
+    ["crm_relation", "create", "team"],
+    ["crm_relation", "delete", "personal"],
+    ["timeline", "read", "team"],
+    ["timeline", "create", "team"],
+    ["crm_configuration", "read", "tenant"],
+    ["automation", "read", "tenant"],
+    ["module", "read", "tenant"],
+    ["template", "read", "tenant"],
     ["audit", "read", "personal"],
   ],
 };
@@ -235,6 +276,18 @@ export async function requirePermission(
     throw new ForbiddenError("Autorisation insuffisante.");
   }
   return scope;
+}
+
+export async function requireRecordPermission(
+  actor: AuthContext,
+  type: string,
+  action: PermissionAction,
+): Promise<PermissionScope> {
+  const exact = await getPermissionScope(actor, type, action);
+  if (exact) return exact;
+  const generic = await getPermissionScope(actor, "crm_record", action);
+  if (generic) return generic;
+  throw new ForbiddenError("Autorisation insuffisante.");
 }
 
 export async function requireAdmin(actor: AuthContext) {
