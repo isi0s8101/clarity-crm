@@ -123,6 +123,52 @@ export const crmRecords = sqliteTable(
   (table) => [
     index("idx_crm_records_tenant_type").on(table.tenantId, table.type),
     index("idx_crm_records_tenant_owner").on(table.tenantId, table.ownerId),
+    index("idx_crm_records_tenant_team_type").on(table.tenantId, table.teamId, table.type),
+    index("idx_crm_records_tenant_status").on(table.tenantId, table.status),
+    uniqueIndex("idx_crm_records_tenant_id").on(table.tenantId, table.id),
+  ],
+);
+
+export const crmRelations = sqliteTable(
+  "crm_relations",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
+    fromRecordId: text("from_record_id").notNull().references(() => crmRecords.id),
+    toRecordId: text("to_record_id").notNull().references(() => crmRecords.id),
+    relationType: text("relation_type").notNull(),
+    createdBy: text("created_by").notNull(),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    uniqueIndex("idx_crm_relations_unique").on(
+      table.tenantId,
+      table.fromRecordId,
+      table.toRecordId,
+      table.relationType,
+    ),
+    index("idx_crm_relations_from").on(table.tenantId, table.fromRecordId),
+    index("idx_crm_relations_to").on(table.tenantId, table.toRecordId),
+  ],
+);
+
+export const crmTimelineEvents = sqliteTable(
+  "crm_timeline_events",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    tenantId: text("tenant_id").notNull(),
+    teamId: text("team_id").notNull(),
+    ownerId: text("owner_id").notNull(),
+    recordId: text("record_id").notNull().references(() => crmRecords.id),
+    eventType: text("event_type").notNull(),
+    summary: text("summary").notNull(),
+    data: text("data").notNull().default("{}"),
+    actorId: text("actor_id").notNull(),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("idx_crm_timeline_record").on(table.tenantId, table.recordId, table.createdAt),
+    index("idx_crm_timeline_team").on(table.tenantId, table.teamId, table.createdAt),
   ],
 );
 
@@ -142,6 +188,33 @@ export const crmConfigurations = sqliteTable(
   (table) => [index("idx_crm_config_tenant_kind").on(table.tenantId, table.kind)],
 );
 
+export const crmConfigurationVersions = sqliteTable(
+  "crm_configuration_versions",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
+    configurationId: text("configuration_id").notNull().references(() => crmConfigurations.id),
+    version: integer("version").notNull(),
+    name: text("name").notNull(),
+    active: integer("active").notNull(),
+    definition: text("definition").notNull().default("{}"),
+    createdBy: text("created_by").notNull(),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    uniqueIndex("idx_crm_config_versions_unique").on(
+      table.tenantId,
+      table.configurationId,
+      table.version,
+    ),
+    index("idx_crm_config_versions_lookup").on(
+      table.tenantId,
+      table.configurationId,
+      table.createdAt,
+    ),
+  ],
+);
+
 export const automationRuns = sqliteTable("automation_runs", {
   id: text("id").primaryKey(),
   tenantId: text("tenant_id").notNull(),
@@ -152,6 +225,30 @@ export const automationRuns = sqliteTable("automation_runs", {
   error: text("error").notNull().default(""),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
+
+export const webhookDeliveries = sqliteTable(
+  "webhook_deliveries",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
+    webhookId: text("webhook_id").notNull(),
+    direction: text("direction").notNull(),
+    event: text("event").notNull(),
+    status: text("status").notNull(),
+    requestBody: text("request_body").notNull().default("{}"),
+    responseCode: integer("response_code"),
+    responseBody: text("response_body").notNull().default(""),
+    error: text("error").notNull().default(""),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("idx_webhook_deliveries_lookup").on(
+      table.tenantId,
+      table.webhookId,
+      table.createdAt,
+    ),
+  ],
+);
 
 export const auditEvents = sqliteTable(
   "audit_events",
