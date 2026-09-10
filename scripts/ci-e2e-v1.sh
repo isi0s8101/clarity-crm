@@ -21,7 +21,7 @@ if [[ ! -f "$CONFIG" ]]; then
   exit 1
 fi
 
-for migration in drizzle/[0-9][0-9][0-9][0-9]_*.sql; do
+for migration in legacy/d1/drizzle/[0-9][0-9][0-9][0-9]_*.sql; do
   echo "[V1] apply $(basename "$migration")"
   npx wrangler d1 execute DB \
     --local \
@@ -298,4 +298,4 @@ for id in "$COMPANY_ID" "$CONTACT_ID" "$LEAD_ID" "$OPPORTUNITY_ID" "$TASK_ID" "$
   [[ -n "$id" ]] || exit 1
 done
 
-echo "clarity CRM v1 HTTP/D1 E2E: ok"
+echo "clarity CRM v1 legacy D1 HTTP E2E: ok"

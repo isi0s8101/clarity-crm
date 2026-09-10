@@ -39,6 +39,8 @@ jobs:
           test -x scripts/migrate-legacy-d1.mjs
           test -x scripts/ci-legacy-d1-migration.sh
           test -x scripts/upgrade-legacy-d1-posix.sh
+          test -d legacy/d1/drizzle
+          test ! -e drizzle/meta/_journal.json
           bash -n scripts/deploy-posix-vm.sh
           bash -n scripts/ci-e2e-posix.sh
           bash -n scripts/ci-legacy-d1-migration.sh

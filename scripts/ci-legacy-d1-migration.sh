@@ -26,7 +26,7 @@ import sys
 fixture = Path(sys.argv[1])
 con = sqlite3.connect(fixture)
 try:
-    for migration in sorted(Path("drizzle").glob("[0-9][0-9][0-9][0-9]_*.sql")):
+    for migration in sorted(Path("legacy/d1/drizzle").glob("[0-9][0-9][0-9][0-9]_*.sql")):
         sql = migration.read_text().replace("--> statement-breakpoint", "")
         con.executescript(sql)
 

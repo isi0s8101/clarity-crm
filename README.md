@@ -1,16 +1,30 @@
-# Clarity CRM — construction de clarity-crm_v1.0
+# Clarity CRM - construction de clarity-crm_v1.0
 
 CRM professionnel modulaire conçu pour piloter les ventes, configurer les objets métier, automatiser les tâches et gouverner les accès sans complexité excessive.
 
-`clarity-crm_v1.0` est construit de manière incrémentale à partir de l'historique existant. Les versions historiques `clarity-crm_v0.1`, `clarity-crm_v0.2` et `clarity-crm_v0.3` restent inchangées dans Git.
+`clarity-crm_v1.0` est construit de manière incrémentale à partir de l'historique existant. Les versions historiques `clarity-crm_v0.1`, `clarity-crm_v0.2` et `clarity-crm_v0.3` restent conservées, mais le runtime POSIX cible de la v1.0 est maintenant PostgreSQL.
 
-## Baseline technique — clarity-crm_v0.3-foundations
+## Runtime cible
 
-L'état consolidé des fondations est désormais la baseline technique de référence pour la construction de `clarity-crm_v1.0`.
+Le runtime de référence est une application Next.js/Vinext sous Node.js 22+ avec PostgreSQL comme base de données applicative. Cloudflare D1 n'est plus le socle runtime POSIX : il est conservé uniquement comme héritage de versions précédentes et comme source d'import contrôlée vers PostgreSQL.
+
+## Base de données
+
+- Production/POSIX : `db/schema.ts` décrit le modèle applicatif et `postgres/migrations/*.sql` est la chaîne de migrations utilisée en exploitation.
+- Application des migrations PostgreSQL : `npm run db:migrate`.
+- Bootstrap initial contrôlé : `npm run bootstrap:admin`.
+- Déploiement Debian/POSIX complet : `sudo ./scripts/deploy-posix-vm.sh install`.
+- Migration legacy D1 : `npm run db:migrate:legacy -- --source-root <chemin_d1>` importe une ancienne base D1 vers PostgreSQL. Ce script ne sert pas à initialiser une base neuve.
+- Migrations D1 historiques : `legacy/d1/drizzle/` garde l'historique SQLite/D1 pour vérification et import. Ce répertoire n'est pas la source de vérité du runtime PostgreSQL.
+- `drizzle.config.ts` sert à générer les artefacts PostgreSQL depuis `db/schema.ts` vers `postgres/generated`. Les migrations réellement appliquées en production restent celles de `postgres/migrations`.
+
+## Baseline technique - clarity-crm_v0.3-foundations
+
+L'état consolidé des fondations est la baseline technique de référence pour la construction de `clarity-crm_v1.0`.
 
 Fonctions réellement validées :
 
-- authentification obligatoire via l'identité transmise par la plateforme ;
+- authentification obligatoire via session native ;
 - bootstrap initial contrôlé du premier administrateur ;
 - invitation obligatoire pour tout nouvel accès après bootstrap ;
 - plusieurs organisations/tenants avec memberships et invitations séparées ;
@@ -22,29 +36,52 @@ Fonctions réellement validées :
 - profils `admin` et `user` ;
 - RBAC serveur par objet, action et scope ;
 - scopes `personal`, `team`, `tenant` ;
-- opportunités filtrées par tenant et scope ;
+- opportunités et records CRM filtrés par tenant et scope ;
 - audit tenant-aware avec scopes personnel, équipe et tenant appliqués côté SQL ;
 - utilisateurs actifs/désactivés ;
 - administration protégée des membres, équipes, invitations et permissions ;
-- migrations `0000` à `0006` appliquées séquentiellement et testées sur SQLite et D1 local ;
-- CI Node 22 avec installation, lint, tests, typecheck, build et recette HTTP/D1 réelle.
+- migrations PostgreSQL POSIX appliquées séquentiellement avec checksum ;
+- import legacy D1 vers PostgreSQL transactionnel et fail-closed ;
+- CI Node 22 avec installation, lint, tests, typecheck, build, migrations PostgreSQL, recette POSIX et recette d'import D1.
 
 La matrice détaillée est maintenue dans `docs/traceability-v1.0.md`.
 
-Dettes connues non bloquantes pour le cœur CRM :
+Dette connue non bloquante pour le cœur CRM :
 
-- le provisioning administratif complet des organisations (création/renommage/archivage) n'est pas encore exposé tant que sa politique n'est pas spécifiée ;
-- les snapshots Drizzle sont présents jusqu'à `0004_snapshot.json` ; le journal et les migrations `0005/0006` sont enregistrés et testés, mais les snapshots correspondants restent à régulariser.
+- le provisioning administratif complet des organisations (création/renommage/archivage) n'est pas encore exposé tant que sa politique n'est pas spécifiée.
 
 ## Prochaine étape de clarity-crm_v1.0
 
-Le prochain livrable est le cœur CRM universel : Sociétés, Contacts, Leads, Opportunités enrichies, Rendez-vous, Tâches, Notes, Documents, Produits/Services, Devis, Factures, Contrats, Timeline, recherche, notifications, dashboards et reporting basés sur les données persistantes réelles.
+Le prochain livrable reste le cœur CRM universel : Sociétés, Contacts, Leads, Opportunités enrichies, Rendez-vous, Tâches, Notes, Documents, Produits/Services, Devis, Factures, Contrats, Timeline, recherche, notifications, dashboards et reporting basés sur les données persistantes réelles.
 
-Les objets configurables, pipelines dynamiques, formulaires, automatisations, modules, templates, API générique et webhooks seront construits ensuite sur ce même socle avant la finalisation de `clarity-crm_v1.0`.
+Les objets configurables, pipelines dynamiques, formulaires, automatisations, modules, templates, API générique et webhooks sont construits sur ce même socle. Les webhooks sortants sont soumis à une politique anti-SSRF avec HTTPS public, allowlist optionnelle, résolution DNS juste avant envoi, blocage des adresses privées/réservées et lecture bornée des réponses.
 
-## Socle technique
+## Installation POSIX courte
 
-Application Vinext/React avec stockage Cloudflare D1, migrations Drizzle et déploiement Cloudflare Workers via Sites.
+Contexte attendu : Debian 13 ou compatible, utilisateur avec `sudo/root`, PostgreSQL local géré par le script.
+
+```bash
+git clone https://github.com/isi0s8101/clarity-crm.git
+cd clarity-crm
+sudo ./scripts/deploy-posix-vm.sh install
+```
+
+Commandes applicatives utiles :
+
+```bash
+npm run install:ci
+npm run db:migrate
+npm run bootstrap:admin
+npm test
+npm run build
+```
+
+Migration d'une ancienne base D1 vers PostgreSQL :
+
+```bash
+npm run db:migrate
+npm run db:migrate:legacy -- --source-root .wrangler/state --apply
+```
 
 ## Historique conservé
 
@@ -68,7 +105,7 @@ Administration réelle ajoutée :
 - création d'équipe et invitation utilisateur auditables ;
 - modification de rôle/équipe avec garde-fou contre l'auto-rétrogradation admin ;
 - modification de périmètre de permission avec refus d'administration pour le profil utilisateur ;
-- migration D1 additive pour les invitations.
+- migration legacy D1 additive pour les invitations.
 
 ### clarity-crm_v0.3
 
