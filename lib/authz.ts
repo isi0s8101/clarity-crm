@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 import { getDb } from "@/db";
 import {
@@ -12,6 +12,7 @@ import {
 } from "@/db/schema";
 import { resolveAccessSelection } from "./access-resolution.js";
 import { canUseScopedResource, tenantSelectorFromHeaders } from "./authz-policy.js";
+import { readNativeIdentity } from "./native-auth";
 import { CORE_RECORD_TYPES } from "./crm-policy.js";
 
 export type PermissionAction =
@@ -48,7 +49,6 @@ type AuditInput = {
 };
 
 const DEFAULT_TENANT_ID = "default";
-const DEFAULT_TENANT_NAME = "Clarity CRM";
 const DEFAULT_TEAM_ID = "default-sales";
 const DEFAULT_TEAM_NAME = "Équipe commerciale";
 const PERMISSION_INSERT_BATCH_SIZE = 10;
@@ -129,37 +129,16 @@ export class ForbiddenError extends Error {
   status = 403;
 }
 
-export function readAuthenticatedIdentity(request: RequestLike) {
-  const userId = request.headers.get("oai-authenticated-user-id")?.trim();
-  const email = request.headers
-    .get("oai-authenticated-user-email")
-    ?.trim()
-    .toLowerCase();
-
-  if (!userId || !email) {
+export async function readAuthenticatedIdentity(request: RequestLike) {
+  const identity = await readNativeIdentity(request);
+  if (!identity) {
     throw new AuthRequiredError("Authentification obligatoire.");
   }
-
-  const encodedFullName = request.headers.get("oai-authenticated-user-full-name");
-  const fullNameEncoding = request.headers.get(
-    "oai-authenticated-user-full-name-encoding",
-  );
-  const decodedName =
-    encodedFullName && fullNameEncoding === "percent-encoded-utf-8"
-      ? safeDecodeURIComponent(encodedFullName)
-      : null;
-
-  return {
-    userId,
-    email,
-    displayName: decodedName || email,
-  };
+  return identity;
 }
 
-export async function resolveAuthContext(
-  request: RequestLike,
-): Promise<AuthContext> {
-  const identity = readAuthenticatedIdentity(request);
+export async function resolveAuthContext(request: RequestLike): Promise<AuthContext> {
+  const identity = await readAuthenticatedIdentity(request);
   const db = getDb();
   const selector = tenantSelectorFromHeaders(request.headers);
   const tenantSelector = selector.value;
@@ -168,7 +147,7 @@ export async function resolveAuthContext(
     throw new ForbiddenError("Tenant invalide.");
   }
 
-  const [membershipRows, pendingInvitationRows, membershipCountRows] = await Promise.all([
+  const [membershipRows, pendingInvitationRows] = await Promise.all([
     db.select().from(memberships).where(eq(memberships.userId, identity.userId)),
     db
       .select()
@@ -179,14 +158,12 @@ export async function resolveAuthContext(
           eq(invitations.status, "pending"),
         ),
       ),
-    db.select({ count: sql<number>`count(*)` }).from(memberships),
   ]);
 
   const access = resolveAccessSelection({
     tenantSelector,
     memberships: membershipRows,
     pendingInvitations: pendingInvitationRows,
-    totalMembershipCount: Number(membershipCountRows[0]?.count ?? 0),
   });
 
   if (access.kind === "denied") {
@@ -219,7 +196,7 @@ export async function resolveAuthContext(
       await db
         .update(memberships)
         .set({ teamId, updatedAt: new Date().toISOString() })
-        .where(eq(memberships.id, membership.id));
+        .where(and(eq(memberships.id, membership.id), eq(memberships.tenantId, tenantId)));
     }
   } else if (pendingInvitation) {
     tenantId = pendingInvitation.tenantId;
@@ -239,22 +216,9 @@ export async function resolveAuthContext(
     await db
       .update(invitations)
       .set({ status: "accepted", updatedAt: new Date().toISOString() })
-      .where(eq(invitations.id, pendingInvitation.id));
+      .where(and(eq(invitations.id, pendingInvitation.id), eq(invitations.tenantId, tenantId)));
   } else {
-    tenantId = DEFAULT_TENANT_ID;
-    await ensureBootstrapTenant();
-    teamId = DEFAULT_TEAM_ID;
-    role = "admin";
-
-    await upsertUser(identity);
-    await db.insert(memberships).values({
-      id: `${tenantId}:${identity.userId}`,
-      tenantId,
-      userId: identity.userId,
-      teamId,
-      role,
-      status: "active",
-    });
+    throw new ForbiddenError("Invitation requise pour rejoindre une organisation.");
   }
 
   await upsertUser(identity);
@@ -318,9 +282,7 @@ export async function getPermissionScope(
     .limit(1);
 
   const scope = rows[0]?.scope;
-  return scope === "tenant" || scope === "team" || scope === "personal"
-    ? scope
-    : null;
+  return scope === "tenant" || scope === "team" || scope === "personal" ? scope : null;
 }
 
 export function canUseResource(
@@ -360,11 +322,7 @@ export function authErrorResponse(error: unknown) {
   return null;
 }
 
-async function upsertUser(identity: {
-  userId: string;
-  email: string;
-  displayName: string;
-}) {
+async function upsertUser(identity: { userId: string; email: string; displayName: string }) {
   const db = getDb();
   await db
     .insert(users)
@@ -395,18 +353,6 @@ async function requireOrganization(tenantId: string) {
   }
 }
 
-async function ensureBootstrapTenant() {
-  const db = getDb();
-  await db
-    .insert(organizations)
-    .values({ id: DEFAULT_TENANT_ID, name: DEFAULT_TENANT_NAME })
-    .onConflictDoNothing();
-  await db
-    .insert(teams)
-    .values({ id: DEFAULT_TEAM_ID, tenantId: DEFAULT_TENANT_ID, name: DEFAULT_TEAM_NAME })
-    .onConflictDoNothing();
-}
-
 async function resolveTeamForTenant(tenantId: string, requestedTeamId: string | null) {
   const db = getDb();
   if (requestedTeamId) {
@@ -421,8 +367,7 @@ async function resolveTeamForTenant(tenantId: string, requestedTeamId: string | 
     return requestedTeamId;
   }
 
-  const defaultTeamId =
-    tenantId === DEFAULT_TENANT_ID ? DEFAULT_TEAM_ID : `team:${tenantId}:default`;
+  const defaultTeamId = tenantId === DEFAULT_TENANT_ID ? DEFAULT_TEAM_ID : `team:${tenantId}:default`;
   await db
     .insert(teams)
     .values({ id: defaultTeamId, tenantId, name: DEFAULT_TEAM_NAME })
@@ -446,13 +391,5 @@ async function seedRolePermissions(tenantId: string) {
   for (let offset = 0; offset < values.length; offset += PERMISSION_INSERT_BATCH_SIZE) {
     const batch = values.slice(offset, offset + PERMISSION_INSERT_BATCH_SIZE);
     await db.insert(rolePermissions).values(batch).onConflictDoNothing();
-  }
-}
-
-function safeDecodeURIComponent(value: string) {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return null;
   }
 }
