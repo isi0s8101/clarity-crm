@@ -9,6 +9,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - run: test -x scripts/deploy-posix-vm.sh && bash -n scripts/deploy-posix-vm.sh
       - run: npm ci
       - run: npm run lint
       - run: npm test
