@@ -2,7 +2,6 @@ import { and, desc, eq, inArray, like } from "drizzle-orm";
 
 import { getDb } from "@/db";
 import {
-  crmConfigurations,
   crmRecords,
   crmTimelineEvents,
 } from "@/db/schema";
@@ -15,10 +14,14 @@ import {
 import { runAutomations, type AutomationEvent } from "@/lib/automation";
 import {
   extractKnownRecordRefs,
-  isCoreRecordType,
   normalizeRecordType,
+  normalizeRecordStatus,
   validateRecordInput,
 } from "@/lib/crm-policy.js";
+import {
+  CrmConfigurationValidationError,
+  validateConfiguredRecordData,
+} from "@/lib/crm-runtime-validation";
 import { dispatchOutboundWebhooks, type WebhookEvent } from "@/lib/webhooks";
 
 export type CrmRecord = {
@@ -50,7 +53,11 @@ export async function listCrmRecords(
   if (!type) throw new CrmValidationError("Type CRM invalide.");
   const scope = await requireRecordPermission(actor, type, "read");
   const filters = [eq(crmRecords.tenantId, actor.tenantId), eq(crmRecords.type, type)];
-  if (input.status) filters.push(eq(crmRecords.status, input.status.slice(0, 40)));
+  if (input.status) {
+    const status = normalizeRecordStatus(input.status, null);
+    if (!status) throw new CrmValidationError("Statut invalide.");
+    filters.push(eq(crmRecords.status, status));
+  }
   if (scope === "team") filters.push(eq(crmRecords.teamId, actor.teamId));
   if (scope === "personal") filters.push(eq(crmRecords.ownerId, actor.userId));
   if (input.q?.trim()) filters.push(like(crmRecords.title, `%${input.q.trim().slice(0, 80)}%`));
@@ -89,7 +96,7 @@ export async function createCrmRecord(actor: AuthContext, input: Record<string, 
   const validation = validateRecordInput(input);
   if (!validation.ok) throw new CrmValidationError(validation.error);
   const value = validation.value;
-  await ensureRecordTypeCanBeCreated(actor.tenantId, value.type);
+  await validateConfiguredRecordData(actor.tenantId, value.type, value.data);
   await requireRecordPermission(actor, value.type, "create");
   await assertReferencesBelongToTenant(actor.tenantId, value.data);
 
@@ -145,6 +152,7 @@ export async function updateCrmRecord(actor: AuthContext, id: string, patch: Rec
     data: mergedData,
   });
   if (!validation.ok) throw new CrmValidationError(validation.error);
+  await validateConfiguredRecordData(actor.tenantId, existing.type, validation.value.data);
   await assertReferencesBelongToTenant(actor.tenantId, validation.value.data);
 
   const db = getDb();
@@ -221,35 +229,14 @@ export async function appendTimeline(
 }
 
 export function crmErrorResponse(error: unknown) {
-  if (error instanceof CrmValidationError || error instanceof CrmNotFoundError) {
+  if (
+    error instanceof CrmValidationError ||
+    error instanceof CrmNotFoundError ||
+    error instanceof CrmConfigurationValidationError
+  ) {
     return Response.json({ error: error.message }, { status: error.status });
   }
   return null;
-}
-
-async function ensureRecordTypeCanBeCreated(tenantId: string, type: string) {
-  if (isCoreRecordType(type)) return;
-  const db = getDb();
-  const configs = await db
-    .select({ definition: crmConfigurations.definition })
-    .from(crmConfigurations)
-    .where(
-      and(
-        eq(crmConfigurations.tenantId, tenantId),
-        eq(crmConfigurations.kind, "object"),
-        eq(crmConfigurations.active, 1),
-      ),
-    )
-    .limit(200);
-  const exists = configs.some((config) => {
-    try {
-      const definition = JSON.parse(config.definition) as { key?: unknown };
-      return definition.key === type;
-    } catch {
-      return false;
-    }
-  });
-  if (!exists) throw new CrmValidationError("Objet métier personnalisé inconnu ou désactivé.");
 }
 
 async function assertReferencesBelongToTenant(tenantId: string, data: Record<string, unknown>) {
