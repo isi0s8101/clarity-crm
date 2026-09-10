@@ -17,6 +17,7 @@ import {
   normalizeWebhookUrl,
   validateConfiguration,
 } from "@/lib/crm-policy.js";
+import { hostMatchesAllowedWebhookHosts } from "@/lib/webhook-security.js";
 import { BUILTIN_TEMPLATES, getBuiltinTemplate } from "@/lib/crm-templates";
 import { assertSameOriginMutation } from "@/lib/native-auth";
 
@@ -335,7 +336,12 @@ function validateWebhookNetworkPolicy(kind: string, definition: Record<string, u
   if (kind !== "webhook" || definition.direction !== "outbound") return null;
   const allowPrivate = process.env.CLARITY_WEBHOOK_ALLOW_PRIVATE_E2E === "1";
   const url = normalizeWebhookUrl(definition.url, { allowPrivate });
-  return url ? null : "URL webhook refusée : HTTPS public requis.";
+  if (!url) return "URL webhook refusée : HTTPS public requis.";
+  const hostname = new URL(url).hostname;
+  if (!hostMatchesAllowedWebhookHosts(hostname, process.env.CLARITY_WEBHOOK_ALLOWED_HOSTS)) {
+    return "URL webhook refusée : hôte hors allowlist.";
+  }
+  return null;
 }
 
 function decodeConfiguration(row: typeof crmConfigurations.$inferSelect) {
