@@ -1,20 +1,52 @@
 name: CI
 on: [push, pull_request]
+
 jobs:
-  verify:
+  verify-posix:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: claritycrm
+          POSTGRES_PASSWORD: clarity-ci-password
+          POSTGRES_DB: claritycrm
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U claritycrm -d claritycrm"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      DATABASE_URL: postgresql://claritycrm:clarity-ci-password@127.0.0.1:5432/claritycrm
+      CLARITY_ADMIN_EMAIL: admin@clarity.test
+      CLARITY_ADMIN_PASSWORD: CI-password-2026-strong
+      CLARITY_COOKIE_SECURE: "0"
+      PORT: "5173"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-      - run: test -x scripts/deploy-posix-vm.sh && bash -n scripts/deploy-posix-vm.sh
+      - name: Validate operational scripts
+        run: |
+          test -x scripts/deploy-posix-vm.sh
+          test -x scripts/migrate-postgres.mjs
+          test -x scripts/bootstrap-admin.mjs
+          test -x scripts/ci-e2e-posix.sh
+          bash -n scripts/deploy-posix-vm.sh
+          bash -n scripts/ci-e2e-posix.sh
       - run: npm ci
       - run: npm run lint
       - run: npm test
       - run: npx tsc --noEmit
       - run: npm run build
-      - run: bash scripts/ci-e2e-foundations.sh
-      - run: bash scripts/ci-e2e-v1.sh
-      - run: bash scripts/ci-e2e-v1-extensions.sh
+        env:
+          NODE_ENV: production
+      - run: npm run db:migrate
+      - run: npm run bootstrap:admin
+      - run: bash scripts/ci-e2e-posix.sh
+        env:
+          NODE_ENV: production

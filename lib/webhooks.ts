@@ -1,4 +1,3 @@
-import { env } from "cloudflare:workers";
 import { and, eq } from "drizzle-orm";
 
 import { getDb } from "@/db";
@@ -197,7 +196,7 @@ function parseDefinition(value: string): Record<string, unknown> | null {
 }
 
 function readEnv(name: string) {
-  return (env as unknown as Record<string, unknown>)[name] as string | undefined;
+  return process.env[name];
 }
 
 async function saveDelivery(input: {

@@ -1,4 +1,3 @@
-import { env } from "cloudflare:workers";
 import { NextRequest, NextResponse } from "next/server";
 import { and, desc, eq } from "drizzle-orm";
 
@@ -19,6 +18,9 @@ import {
   validateConfiguration,
 } from "@/lib/crm-policy.js";
 import { BUILTIN_TEMPLATES, getBuiltinTemplate } from "@/lib/crm-templates";
+import { assertSameOriginMutation } from "@/lib/native-auth";
+
+export const runtime = "nodejs";
 
 export async function GET(request: NextRequest) {
   try {
@@ -72,6 +74,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    assertSameOriginMutation(request);
     const actor = await resolveAuthContext(request);
     await requirePermission(actor, "crm_configuration", "administer");
     const body = (await request.json()) as Record<string, unknown>;
@@ -141,6 +144,7 @@ export async function POST(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
   try {
+    assertSameOriginMutation(request);
     const actor = await resolveAuthContext(request);
     await requirePermission(actor, "crm_configuration", "administer");
     const body = (await request.json()) as Record<string, unknown>;
@@ -329,7 +333,7 @@ async function saveVersion(
 
 function validateWebhookNetworkPolicy(kind: string, definition: Record<string, unknown>) {
   if (kind !== "webhook" || definition.direction !== "outbound") return null;
-  const allowPrivate = ((env as unknown as Record<string, unknown>).CLARITY_WEBHOOK_ALLOW_PRIVATE_E2E) === "1";
+  const allowPrivate = process.env.CLARITY_WEBHOOK_ALLOW_PRIVATE_E2E === "1";
   const url = normalizeWebhookUrl(definition.url, { allowPrivate });
   return url ? null : "URL webhook refusée : HTTPS public requis.";
 }

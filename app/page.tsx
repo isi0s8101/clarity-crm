@@ -1,5 +1,6 @@
-import { CRMShell } from "./crm-shell";
 import { requireChatGPTUser } from "./chatgpt-auth";
+import { CRMShell } from "./crm-shell";
+import { LogoutButton } from "./logout-button";
 import { TenantSwitcher } from "./tenant-switcher";
 
 export const dynamic = "force-dynamic";
@@ -10,6 +11,7 @@ export default async function Home() {
     <>
       <CRMShell user={{ email: user.email, displayName: user.displayName }} />
       <TenantSwitcher />
+      <LogoutButton />
     </>
   );
 }

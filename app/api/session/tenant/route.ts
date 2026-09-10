@@ -1,28 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import {
-  authErrorResponse,
-  resolveAuthContext,
-} from "@/lib/authz";
+import { authErrorResponse, resolveAuthContext } from "@/lib/authz";
 import { normalizeTenantSelector } from "@/lib/authz-policy.js";
+import { assertSameOriginMutation, secureCookieForRequest } from "@/lib/native-auth";
 
 const COOKIE_NAME = "clarity_tenant";
+export const runtime = "nodejs";
 
 export async function POST(request: NextRequest) {
   try {
+    assertSameOriginMutation(request);
     const body = (await request.json()) as Record<string, unknown>;
-    const tenantId = normalizeTenantSelector(
-      typeof body.tenantId === "string" ? body.tenantId : "",
-    );
-
-    if (!tenantId) {
-      return NextResponse.json({ error: "Tenant invalide." }, { status: 400 });
-    }
+    const tenantId = normalizeTenantSelector(typeof body.tenantId === "string" ? body.tenantId : "");
+    if (!tenantId) return NextResponse.json({ error: "Tenant invalide." }, { status: 400 });
 
     const headers = new Headers(request.headers);
     headers.set("x-clarity-tenant-id", tenantId);
     const actor = await resolveAuthContext({ headers });
-
     const response = NextResponse.json({
       user: {
         email: actor.email,
@@ -32,15 +26,13 @@ export async function POST(request: NextRequest) {
         teamId: actor.teamId,
       },
     });
-
     response.cookies.set(COOKIE_NAME, actor.tenantId, {
       httpOnly: true,
-      sameSite: "lax",
-      secure: request.nextUrl.protocol === "https:",
+      sameSite: "strict",
+      secure: secureCookieForRequest(request),
       path: "/",
       maxAge: 60 * 60 * 24 * 30,
     });
-
     return response;
   } catch (error) {
     const authResponse = authErrorResponse(error);
@@ -52,11 +44,12 @@ export async function POST(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   try {
+    assertSameOriginMutation(request);
     const response = NextResponse.json({ ok: true });
     response.cookies.set(COOKIE_NAME, "", {
       httpOnly: true,
-      sameSite: "lax",
-      secure: request.nextUrl.protocol === "https:",
+      sameSite: "strict",
+      secure: secureCookieForRequest(request),
       path: "/",
       maxAge: 0,
     });
