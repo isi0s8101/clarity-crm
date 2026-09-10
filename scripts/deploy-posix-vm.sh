@@ -157,7 +157,7 @@ backup_state() {
   sha="$(run_app git -C "$APP_DIR" rev-parse HEAD)"
   printf '%s\n' "$sha" > "$backup/commit"
   printf '%s\n' "$BRANCH" > "$backup/branch"
-  run_app pg_dump --format=custom --file="$backup/database.dump.tmp" "$DB_NAME"
+  run_app pg_dump --format=custom "$DB_NAME" > "$backup/database.dump.tmp"
   mv "$backup/database.dump.tmp" "$backup/database.dump"
   chown root:root "$backup/database.dump"; chmod 0600 "$backup/database.dump"
   if [[ -d "$APP_DIR/.wrangler/state" ]]; then
@@ -307,7 +307,7 @@ rollback_latest() {
   systemctl stop "$SERVICE_NAME" 2>/dev/null || true
   run_app git -C "$APP_DIR" reset --hard "$sha"
   run_app git -C "$APP_DIR" checkout "$branch"
-  run_app pg_restore --clean --if-exists --no-owner --dbname="$DB_NAME" "$backup/database.dump"
+  run_app pg_restore --clean --if-exists --no-owner --dbname="$DB_NAME" < "$backup/database.dump"
   install_and_validate
   migrate_database
   install_service
@@ -324,7 +324,7 @@ Web     : http://127.0.0.1:${APP_PORT}
 Admin initial (si créé) : sudo cat ${INITIAL_ADMIN_FILE}
 
 Tunnel Termux :
-ssh -N -4 -p 52222 -i ~/.ssh/osint-main_ed25519 -o IdentitiesOnly=yes -o ExitOnForwardFailure=yes \\
+ssh -N -4 -p 52222 -i ~/.ssh/osint-main_ed25519 -o IdentitiesOnly=yes -o ExitOnForwardFailure=yes \
   -L ${APP_PORT}:127.0.0.1:${APP_PORT} dev101@IP_VM
 EOF
 }
