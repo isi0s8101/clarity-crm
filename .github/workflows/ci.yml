@@ -36,9 +36,13 @@ jobs:
           test -x scripts/migrate-postgres.mjs
           test -x scripts/bootstrap-admin.mjs
           test -x scripts/ci-e2e-posix.sh
+          test -x scripts/migrate-legacy-d1.mjs
+          test -x scripts/ci-legacy-d1-migration.sh
+          test -x scripts/upgrade-legacy-d1-posix.sh
           bash -n scripts/deploy-posix-vm.sh
           bash -n scripts/ci-e2e-posix.sh
           bash -n scripts/ci-legacy-d1-migration.sh
+          bash -n scripts/upgrade-legacy-d1-posix.sh
           node --check scripts/migrate-legacy-d1.mjs
       - run: npm ci
       - run: npm run lint
