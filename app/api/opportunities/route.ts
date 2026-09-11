@@ -9,6 +9,7 @@ import {
   requirePermission,
   resolveAuthContext,
 } from "@/lib/authz";
+import { assertSameOriginMutation } from "@/lib/native-auth";
 
 const allowedStages = new Set([
   "qualification",
@@ -44,6 +45,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    assertSameOriginMutation(request);
     const actor = await resolveAuthContext(request);
     await requirePermission(actor, "opportunity", "create");
     const body = (await request.json()) as Record<string, unknown>;
@@ -92,6 +94,7 @@ export async function POST(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
   try {
+    assertSameOriginMutation(request);
     const actor = await resolveAuthContext(request);
     const scope = await requirePermission(actor, "opportunity", "update");
     const body = (await request.json()) as Record<string, unknown>;

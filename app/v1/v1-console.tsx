@@ -331,7 +331,7 @@ export function V1Console({ user }: { user: { email: string; displayName: string
               </button>
             ))}
           </nav>
-          <div className="mt-5 border-t border-slate-100 pt-4 text-xs text-slate-500">Données persistantes D1 · RBAC serveur · isolation tenant</div>
+          <div className="mt-5 border-t border-slate-100 pt-4 text-xs text-slate-500">Données PostgreSQL persistantes · RBAC serveur · isolation tenant</div>
         </aside>
 
         <section className="min-w-0 space-y-5">

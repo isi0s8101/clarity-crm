@@ -11,6 +11,7 @@ import {
 } from "@/lib/authz";
 import { crmErrorResponse, getCrmRecord } from "@/lib/crm-core";
 import { dispatchOutboundWebhooks, type WebhookEvent } from "@/lib/webhooks";
+import { assertSameOriginMutation } from "@/lib/native-auth";
 
 const allowedEvents = new Set<WebhookEvent>([
   "record.created",
@@ -63,6 +64,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    assertSameOriginMutation(request);
     const actor = await resolveAuthContext(request);
     await requirePermission(actor, "webhook", "administer");
     const body = (await request.json()) as Record<string, unknown>;

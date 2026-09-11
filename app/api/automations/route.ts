@@ -11,6 +11,7 @@ import {
 } from "@/lib/authz";
 import { runAutomations, type AutomationEvent } from "@/lib/automation";
 import { crmErrorResponse, getCrmRecord } from "@/lib/crm-core";
+import { assertSameOriginMutation } from "@/lib/native-auth";
 
 const allowedEvents = new Set<AutomationEvent>([
   "record.created",
@@ -64,6 +65,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    assertSameOriginMutation(request);
     const actor = await resolveAuthContext(request);
     await requirePermission(actor, "automation", "administer");
     const body = (await request.json()) as Record<string, unknown>;
