@@ -18,7 +18,7 @@ const TYPES = [
   ["contract", "Contrats"],
 ] as const;
 
-type View = "crm" | "config" | "automations" | "webhooks" | "forms";
+type View = "dashboard" | "crm" | "config" | "automations" | "webhooks" | "forms";
 type SessionUser = { email: string; displayName: string; role: "admin" | "user"; tenantId: string; teamId: string };
 type RecordItem = {
   id: string;
@@ -47,6 +47,15 @@ type TimelineItem = {
   actorId: string;
   createdAt: string;
 };
+type DashboardMetrics = {
+  openOpportunities: number;
+  pipelineAmountCents: number;
+  stageCounts: Record<string, number>;
+  wonOpportunities: number;
+  openTasks: number;
+  overdueTasks: number;
+  activity: TimelineItem[];
+};
 
 const EXAMPLES: Record<string, Record<string, unknown>> = {
   company: { website: "https://example.com" },
@@ -74,7 +83,7 @@ const CONFIG_EXAMPLES: Record<string, Record<string, unknown>> = {
 };
 
 export function V1Console({ user }: { user: { email: string; displayName: string } }) {
-  const [view, setView] = useState<View>("crm");
+  const [view, setView] = useState<View>("dashboard");
   const [session, setSession] = useState<SessionUser | null>(null);
   const [type, setType] = useState("company");
   const [records, setRecords] = useState<RecordItem[]>([]);
@@ -93,6 +102,7 @@ export function V1Console({ user }: { user: { email: string; displayName: string
   const [forms, setForms] = useState<ConfigurationItem[]>([]);
   const [selectedFormKey, setSelectedFormKey] = useState("");
   const [formFieldValues, setFormFieldValues] = useState<Record<string, string>>({ title: "Nouvel enregistrement" });
+  const [dashboard, setDashboard] = useState<DashboardMetrics | null>(null);
 
   const isAdmin = session?.role === "admin";
   const typeLabel = useMemo(() => TYPES.find(([key]) => key === type)?.[1] ?? type, [type]);
@@ -129,6 +139,16 @@ export function V1Console({ user }: { user: { email: string; displayName: string
     }
   }, [isAdmin, request]);
 
+  const loadDashboard = useCallback(async () => {
+    try {
+      const payload = await request("/api/dashboard") as unknown as DashboardMetrics;
+      setDashboard(payload);
+    } catch (error) {
+      setDashboard(null);
+      setMessage(errorMessage(error));
+    }
+  }, [request]);
+
   useEffect(() => {
     request("/api/session")
       .then((payload) => setSession(payload.user as SessionUser))
@@ -136,6 +156,7 @@ export function V1Console({ user }: { user: { email: string; displayName: string
   }, [request]);
 
   useEffect(() => {
+    if (view === "dashboard") void Promise.resolve().then(loadDashboard);
     if (view === "crm") void Promise.resolve().then(loadRecords);
     if (view === "config") void Promise.resolve().then(loadConfigurations);
     if (view === "forms") {
@@ -160,7 +181,7 @@ export function V1Console({ user }: { user: { email: string; displayName: string
         .then((payload) => setWebhookDeliveries(Array.isArray(payload.deliveries) ? payload.deliveries as Array<Record<string, unknown>> : []))
         .catch((error) => setMessage(errorMessage(error)));
     }
-  }, [isAdmin, loadConfigurations, loadRecords, request, selectedFormKey, view]);
+  }, [isAdmin, loadConfigurations, loadDashboard, loadRecords, request, selectedFormKey, view]);
 
   const changeType = (nextType: string) => {
     setType(nextType);
@@ -325,9 +346,9 @@ export function V1Console({ user }: { user: { email: string; displayName: string
       <div className="mx-auto grid max-w-[1600px] gap-5 p-5 lg:grid-cols-[220px_1fr] lg:p-8">
         <aside className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
           <nav className="space-y-1">
-            {(["crm", "forms", "config", "automations", "webhooks"] as View[]).map((item) => (
+            {(["dashboard", "crm", "forms", "config", "automations", "webhooks"] as View[]).map((item) => (
               <button key={item} className={`w-full rounded-xl px-3 py-2 text-left text-sm font-medium ${view === item ? "bg-slate-950 text-white" : "text-slate-600 hover:bg-slate-100"}`} onClick={() => setView(item)}>
-                {item === "crm" ? "CRM universel" : item === "forms" ? "Formulaires" : item === "config" ? "Configuration" : item === "automations" ? "Automatisations" : "Webhooks"}
+                {item === "dashboard" ? "Dashboard" : item === "crm" ? "CRM universel" : item === "forms" ? "Formulaires" : item === "config" ? "Configuration" : item === "automations" ? "Automatisations" : "Webhooks"}
               </button>
             ))}
           </nav>
@@ -336,6 +357,8 @@ export function V1Console({ user }: { user: { email: string; displayName: string
 
         <section className="min-w-0 space-y-5">
           {message ? <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm">{message}</div> : null}
+
+          {view === "dashboard" ? <section className="space-y-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-semibold">Dashboard réel</h2><p className="text-sm text-slate-500">Indicateurs calculés uniquement à partir des données accessibles dans le tenant courant.</p></div><button onClick={() => void loadDashboard()} className="rounded-lg border px-3 py-2 text-sm">Actualiser</button></div>{dashboard ? <><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3"><Metric title="Opportunités ouvertes" value={String(dashboard.openOpportunities)} /><Metric title="Pipeline ouvert" value={formatCents(dashboard.pipelineAmountCents)} /><Metric title="Opportunités gagnées" value={String(dashboard.wonOpportunities)} /><Metric title="Tâches ouvertes" value={String(dashboard.openTasks)} /><Metric title="Tâches échues" value={String(dashboard.overdueTasks)} /><Metric title="Étapes visibles" value={String(Object.keys(dashboard.stageCounts).length)} /></div><div className="grid gap-5 xl:grid-cols-[.9fr_1.1fr]"><div className="rounded-2xl border border-slate-200 bg-white p-5"><h3 className="font-semibold">Répartition du pipeline</h3><div className="mt-4 space-y-3">{Object.keys(dashboard.stageCounts).length ? Object.entries(dashboard.stageCounts).map(([stage, count]) => <div className="flex items-center justify-between border-b border-slate-100 pb-3 text-sm" key={stage}><span>{stage}</span><strong>{count}</strong></div>) : <p className="text-sm text-slate-500">Aucune opportunité accessible.</p>}</div></div><div className="rounded-2xl border border-slate-200 bg-white p-5"><h3 className="font-semibold">Activité récente</h3><div className="mt-4 divide-y divide-slate-100">{dashboard.activity.length ? dashboard.activity.map((item) => <div key={item.id} className="py-3"><strong className="text-sm">{item.summary}</strong><p className="mt-1 text-xs text-slate-500">{item.eventType} · {new Date(item.createdAt).toLocaleString("fr-FR")}</p></div>) : <p className="text-sm text-slate-500">Aucune activité visible.</p>}</div></div></div></> : <p className="rounded-2xl border border-dashed border-slate-200 bg-white p-6 text-sm text-slate-500">Chargement des données du dashboard…</p>}</section> : null}
 
           {view === "crm" ? (
             <>
@@ -396,4 +419,12 @@ function formatWorkflowValue(value: unknown) {
 
 function WorkflowStep({ title, value }: { title: string; value: string }) {
   return <div className="rounded-lg border border-slate-200 bg-slate-50 p-3"><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{title}</p><p className="mt-2 text-sm text-slate-900">{value}</p></div>;
+}
+
+function Metric({ title, value }: { title: string; value: string }) {
+  return <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-sm text-slate-500">{title}</p><strong className="mt-2 block text-2xl tracking-tight">{value}</strong></div>;
+}
+
+function formatCents(value: number) {
+  return new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" }).format(value / 100);
 }
