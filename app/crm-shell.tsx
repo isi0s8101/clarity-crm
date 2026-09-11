@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import {
   Activity,
   AlertCircle,
@@ -35,17 +35,6 @@ import {
   Wand2,
   Workflow,
 } from "lucide-react";
-import {
-  Area,
-  AreaChart,
-  Bar,
-  BarChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip as RechartsTooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -103,6 +92,7 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Toaster } from "@/components/ui/sonner";
+import { CommandPalette, type CrmCommandView } from "@/components/crm/command-palette";
 
 type View =
   | "dashboard"
@@ -196,7 +186,7 @@ type ServerAuditEvent = {
 };
 
 const navigation = [
-  { id: "dashboard" as View, label: "Vue d’ensemble", icon: LayoutDashboard },
+  { id: "dashboard" as View, label: "Accueil", icon: LayoutDashboard },
   { id: "pipeline" as View, label: "Pipeline", icon: Columns3, badge: "14" },
   { id: "objects" as View, label: "Objets métier", icon: Database },
   { id: "automations" as View, label: "Automatisations", icon: Workflow },
@@ -217,33 +207,6 @@ const stages: { id: Stage; label: string; accent: string }[] = [
   { id: "gagne", label: "Gagné", accent: "#10b981" },
 ];
 
-const demoDeals: Deal[] = [
-  { id: "d1", name: "Refonte réseau agences", company: "Nordis Groupe", amount: 48000, stage: "qualification", owner: "ML", due: "12 sept.", confidence: 25 },
-  { id: "d2", name: "Suite conformité", company: "Alta Finance", amount: 28000, stage: "qualification", owner: "SC", due: "16 sept.", confidence: 20 },
-  { id: "d3", name: "Migration cloud hybride", company: "Helio Santé", amount: 82000, stage: "decouverte", owner: "ML", due: "18 sept.", confidence: 45 },
-  { id: "d4", name: "Portail partenaires", company: "Valmont Industrie", amount: 36500, stage: "decouverte", owner: "JA", due: "20 sept.", confidence: 40 },
-  { id: "d5", name: "SOC managé", company: "Kanso Retail", amount: 64000, stage: "proposition", owner: "SC", due: "11 sept.", confidence: 65 },
-  { id: "d6", name: "Audit Zero Trust", company: "Mirova Conseil", amount: 22500, stage: "proposition", owner: "ML", due: "14 sept.", confidence: 70 },
-  { id: "d7", name: "Supervision unifiée", company: "Atelier 27", amount: 41000, stage: "negociation", owner: "JA", due: "10 sept.", confidence: 80 },
-  { id: "d8", name: "PRA multi-sites", company: "Orbis Logistique", amount: 73500, stage: "gagne", owner: "SC", due: "Signé", confidence: 100 },
-];
-
-const revenueData = [
-  { month: "Avr", realised: 72, forecast: 78 },
-  { month: "Mai", realised: 84, forecast: 86 },
-  { month: "Juin", realised: 81, forecast: 94 },
-  { month: "Juil", realised: 96, forecast: 101 },
-  { month: "Août", realised: 104, forecast: 112 },
-  { month: "Sept", realised: 110, forecast: 128 },
-];
-
-const funnelData = [
-  { label: "Leads", value: 92 },
-  { label: "Qualifiés", value: 63 },
-  { label: "Propositions", value: 38 },
-  { label: "Gagnés", value: 21 },
-];
-
 const businessObjects = [
   { name: "Sociétés", plural: "Sociétés", fields: 18, records: 248, owner: "Équipe CRM", status: "Actif" },
   { name: "Contacts", plural: "Contacts", fields: 24, records: 1842, owner: "Équipe CRM", status: "Actif" },
@@ -259,16 +222,8 @@ const automationRules = [
   { id: "a4", name: "Clôture administrative", trigger: "Opportunité passée à Gagné", action: "Créer le contrat et prévenir la finance", runs: "11 ce mois", enabled: false },
 ];
 
-const initialAudit: AuditItem[] = [
-  { action: "Opportunité déplacée", detail: "Supervision unifiée → Négociation", actor: "Jules Arnaud", time: "Il y a 12 min", tone: "blue" },
-  { action: "Règle exécutée", detail: "Relance après proposition · Kanso Retail", actor: "Automatisation", time: "Il y a 34 min", tone: "green" },
-  { action: "Droit modifié", detail: "Équipe Support · export désactivé", actor: "Mélanie Laurent", time: "Aujourd’hui, 09:18", tone: "amber" },
-  { action: "Import terminé", detail: "contacts-septembre.csv · 126 lignes", actor: "Sarah Cohen", time: "Hier, 17:42", tone: "neutral" },
-  { action: "Champ ajouté", detail: "Opportunité · Type de renouvellement", actor: "Mélanie Laurent", time: "Hier, 14:06", tone: "blue" },
-];
-
 const viewTitles: Record<View, { title: string; description: string }> = {
-  dashboard: { title: "Bonjour Mélanie", description: "Voici les priorités commerciales du 9 septembre." },
+  dashboard: { title: "Accueil", description: "Vos priorités, décisions et actions accessibles." },
   pipeline: { title: "Pipeline commercial", description: "Pilotez les opportunités et leur prochaine action." },
   objects: { title: "Objets métier", description: "Un modèle de données clair, gouverné et réutilisable." },
   automations: { title: "Automatisations", description: "Des règles guidées, lisibles et faciles à maintenir." },
@@ -320,97 +275,37 @@ function MetricCard({ label, value, delta, note, tone }: { label: string; value:
   );
 }
 
-function DashboardView({ onNavigate }: { onNavigate: (view: View) => void }) {
-  return (
-    <div className="space-y-5">
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="Pipeline pondéré" value="286 k€" delta="12,4 %" note="vs. mois dernier" tone="blue" />
-        <MetricCard label="Prévision du mois" value="128 k€" delta="6,8 %" note="87 % de l’objectif" tone="violet" />
-        <MetricCard label="Taux de conversion" value="31,6 %" delta="3,2 pts" note="sur 90 jours" tone="green" />
-        <MetricCard label="Cycle moyen" value="24 j" delta="8 %" note="3 jours gagnés" tone="amber" />
-      </div>
-
-      <div className="focus-strip">
-        <div className="flex min-w-0 items-center gap-3">
-          <span className="focus-icon"><Target className="size-5" /></span>
-          <div className="min-w-0">
-            <p className="text-xs font-semibold uppercase tracking-[0.11em] text-blue-200">Priorité du jour</p>
-            <p className="mt-1 truncate text-sm font-medium text-white">3 opportunités nécessitent une prochaine action</p>
-          </div>
-        </div>
-        <Button onClick={() => onNavigate("pipeline")} className="shrink-0 bg-white text-slate-950 hover:bg-blue-50">Voir le pipeline <ArrowRight className="size-4" /></Button>
-      </div>
-
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.55fr)_minmax(300px,.8fr)]">
-        <Panel>
-          <PanelTitle title="Revenu réalisé et prévisionnel" description="En milliers d’euros · 6 derniers mois" action={<StatusPill tone="green">Objectif 147 k€</StatusPill>} />
-          <div className="h-[265px] w-full" aria-label="Évolution du revenu réalisé et prévisionnel">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={revenueData} margin={{ top: 10, right: 8, left: -20, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="realised" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#2563eb" stopOpacity={0.28} /><stop offset="100%" stopColor="#2563eb" stopOpacity={0.01} /></linearGradient>
-                </defs>
-                <CartesianGrid vertical={false} stroke="#e8edf5" strokeDasharray="3 4" />
-                <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fill: "#64748b", fontSize: 12 }} dy={8} />
-                <YAxis axisLine={false} tickLine={false} tick={{ fill: "#94a3b8", fontSize: 12 }} />
-                <RechartsTooltip contentStyle={{ borderRadius: 10, border: "1px solid #dbe3ef", boxShadow: "0 12px 35px rgba(15,23,42,.10)", fontSize: 13 }} />
-                <Area type="monotone" dataKey="forecast" stroke="#94a3b8" strokeWidth={2} strokeDasharray="5 5" fill="transparent" name="Prévision" />
-                <Area type="monotone" dataKey="realised" stroke="#2563eb" strokeWidth={2.5} fill="url(#realised)" name="Réalisé" />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-          <div className="mt-3 flex items-center gap-5 text-xs text-slate-500"><span className="flex items-center gap-2"><i className="h-0.5 w-5 bg-blue-600" /> Réalisé</span><span className="flex items-center gap-2"><i className="h-0.5 w-5 border-t-2 border-dashed border-slate-400" /> Prévision</span></div>
-        </Panel>
-
-        <Panel>
-          <PanelTitle title="Entonnoir commercial" description="Conversion sur 90 jours" />
-          <div className="h-[215px]" aria-label="Entonnoir commercial">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={funnelData} layout="vertical" margin={{ top: 0, right: 15, left: 15, bottom: 0 }}>
-                <XAxis type="number" hide domain={[0, 100]} />
-                <YAxis type="category" dataKey="label" axisLine={false} tickLine={false} tick={{ fill: "#475569", fontSize: 12 }} width={75} />
-                <RechartsTooltip cursor={{ fill: "#f8fafc" }} contentStyle={{ borderRadius: 10, border: "1px solid #dbe3ef", fontSize: 13 }} />
-                <Bar dataKey="value" fill="#4f46e5" radius={[0, 6, 6, 0]} barSize={18} name="Volume" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-          <div className="rounded-xl bg-slate-50 p-3 text-sm"><span className="font-semibold text-slate-950">22,8 %</span><span className="ml-2 text-slate-500">de conversion globale</span></div>
-        </Panel>
-      </div>
-
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(340px,.8fr)]">
-        <Panel>
-          <PanelTitle title="Opportunités à surveiller" description="Échéance proche ou activité manquante" action={<Button variant="ghost" size="sm" onClick={() => onNavigate("pipeline")}>Tout voir <ArrowRight className="size-4" /></Button>} />
-          <div className="space-y-1">
-            {demoDeals.slice(4, 7).map((deal, index) => (
-              <button key={deal.id} onClick={() => onNavigate("pipeline")} className="watch-row w-full text-left">
-                <span className={`watch-rank rank-${index + 1}`}>0{index + 1}</span>
-                <span className="min-w-0 flex-1"><strong className="block truncate text-sm text-slate-900">{deal.name}</strong><span className="text-xs text-slate-500">{deal.company}</span></span>
-                <span className="hidden text-right sm:block"><strong className="block text-sm text-slate-900">{euros.format(deal.amount)}</strong><span className="text-xs text-slate-500">{deal.due}</span></span>
-                <ArrowUpRight className="size-4 text-slate-400" />
-              </button>
-            ))}
-          </div>
-        </Panel>
-
-        <Panel>
-          <PanelTitle title="Activité récente" action={<Button variant="ghost" size="sm" onClick={() => onNavigate("audit")}>Journal</Button>} />
-          <div className="activity-list">
-            {initialAudit.slice(0, 4).map((item) => (
-              <div className="activity-row" key={item.action + item.time}>
-                <span className={`activity-dot dot-${item.tone}`} />
-                <div className="min-w-0"><p className="truncate text-sm font-medium text-slate-800">{item.action}</p><p className="mt-0.5 truncate text-xs text-slate-500">{item.detail}</p></div>
-                <time className="ml-auto shrink-0 text-xs text-slate-400">{item.time.replace("Il y a ", "")}</time>
-              </div>
-            ))}
-          </div>
-        </Panel>
-      </div>
+function DashboardView({ deals, onNavigate, onAdvance }: { deals: Deal[]; onNavigate: (view: View) => void; onAdvance: (deal: Deal) => void }) {
+  const [activities, setActivities] = useState<ServerAuditEvent[]>([]);
+  useEffect(() => {
+    let active = true;
+    fetch("/api/audit")
+      .then(async (response): Promise<{ items: ServerAuditEvent[] }> => response.ok ? (response.json() as Promise<{ items: ServerAuditEvent[] }>) : { items: [] })
+      .then((payload) => { if (active) setActivities(payload.items.slice(0, 4)); })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, []);
+  const openDeals = deals.filter((deal) => deal.stage !== "gagne");
+  const proposals = openDeals.filter((deal) => deal.stage === "proposition");
+  const negotiations = openDeals.filter((deal) => deal.stage === "negociation");
+  const actionItems = [...negotiations, ...proposals, ...openDeals.filter((deal) => deal.due === "À planifier")].slice(0, 5);
+  const openAmount = openDeals.reduce((sum, deal) => sum + deal.amount, 0);
+  return <div className="space-y-5">
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <button className="text-left" onClick={() => onNavigate("pipeline")}><MetricCard label="À traiter" value={String(openDeals.length)} delta="Pipeline" note="opportunités ouvertes" tone="blue" /></button>
+      <button className="text-left" onClick={() => onNavigate("pipeline")}><MetricCard label="En négociation" value={String(negotiations.length)} delta="Priorité" note="prochaine action à confirmer" tone="amber" /></button>
+      <button className="text-left" onClick={() => onNavigate("pipeline")}><MetricCard label="Propositions" value={String(proposals.length)} delta="À suivre" note="relance à programmer" tone="violet" /></button>
+      <button className="text-left" onClick={() => onNavigate("pipeline")}><MetricCard label="Montant ouvert" value={euros.format(openAmount)} delta="Pipeline" note="hors opportunités gagnées" tone="green" /></button>
     </div>
-  );
+    <div className="focus-strip"><div className="flex min-w-0 items-center gap-3"><span className="focus-icon"><Target className="size-5" /></span><div className="min-w-0"><p className="text-xs font-semibold uppercase tracking-[0.11em] text-blue-200">Prochaine décision</p><p className="mt-1 truncate text-sm font-medium text-white">{actionItems.length ? `${actionItems.length} opportunité${actionItems.length > 1 ? "s" : ""} à faire avancer ou à planifier.` : "Aucune opportunité ouverte à traiter."}</p></div></div><Button onClick={() => onNavigate("pipeline")} className="shrink-0 bg-white text-slate-950 hover:bg-blue-50">Voir le pipeline <ArrowRight className="size-4" /></Button></div>
+    <div className="grid gap-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(340px,.8fr)]"><Panel><PanelTitle title="Centre d’actions" description="Actions proposées à partir du stade et de la prochaine action disponible." action={<Button variant="ghost" size="sm" onClick={() => onNavigate("pipeline")}>Tout voir <ArrowRight className="size-4" /></Button>} />
+      {actionItems.length ? <div className="space-y-1">{actionItems.map((deal, index) => <div key={deal.id} className="watch-row"><span className={`watch-rank rank-${Math.min(index + 1, 3)}`}>0{index + 1}</span><span className="min-w-0 flex-1"><strong className="block truncate text-sm text-slate-900">{deal.name}</strong><span className="text-xs text-slate-500">{deal.company} · {deal.stage === "negociation" ? "Décision commerciale à obtenir" : deal.stage === "proposition" ? "Relance à programmer" : "Prochaine action à définir"}</span></span><Button size="sm" variant="outline" onClick={() => onAdvance(deal)}>{deal.stage === "negociation" ? "Faire avancer" : "Planifier"}</Button></div>)}</div> : <p className="rounded-xl border border-dashed border-slate-200 p-5 text-sm text-slate-500">Aucune action à afficher. Créez une opportunité ou mettez à jour une étape.</p>}</Panel>
+      <Panel><PanelTitle title="Activité récente" action={<Button variant="ghost" size="sm" onClick={() => onNavigate("audit")}>Journal</Button>} /><div className="activity-list">{activities.length ? activities.map((item) => <div className="activity-row" key={item.id}><span className={`activity-dot dot-${item.result === "success" ? "green" : item.result === "denied" ? "amber" : "neutral"}`} /><div className="min-w-0"><p className="truncate text-sm font-medium text-slate-800">{item.action}</p><p className="mt-0.5 truncate text-xs text-slate-500">{item.resourceType} · {item.actorEmail}</p></div><time className="ml-auto shrink-0 text-xs text-slate-400">{new Date(item.createdAt).toLocaleDateString("fr-FR", { day: "2-digit", month: "short" })}</time></div>) : <p className="rounded-xl border border-dashed border-slate-200 p-5 text-sm text-slate-500">Aucune activité récente accessible.</p>}</div></Panel></div>
+  </div>;
 }
 
-function PipelineView({ deals, onAdvance, onOpenCreate, query }: { deals: Deal[]; onAdvance: (deal: Deal) => void; onOpenCreate: () => void; query: string }) {
+function PipelineView({ deals, onMove, onOpenCreate, query }: { deals: Deal[]; onMove: (deal: Deal, stage: Stage) => void; onOpenCreate: () => void; query: string }) {
+  const [draggedDealId, setDraggedDealId] = useState<string | null>(null);
   const filtered = deals.filter((deal) => `${deal.name} ${deal.company}`.toLowerCase().includes(query.toLowerCase()));
   return (
     <div className="space-y-5">
@@ -426,19 +321,29 @@ function PipelineView({ deals, onAdvance, onOpenCreate, query }: { deals: Deal[]
           {stages.map((stage) => {
             const stageDeals = filtered.filter((deal) => deal.stage === stage.id);
             return (
-              <section className="kanban-column" key={stage.id} style={{ "--stage": stage.accent } as React.CSSProperties}>
+              <section
+                className={`kanban-column ${draggedDealId ? "kanban-drop-active" : ""}`}
+                key={stage.id}
+                style={{ "--stage": stage.accent } as React.CSSProperties}
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={() => {
+                  const deal = deals.find((item) => item.id === draggedDealId);
+                  if (deal) onMove(deal, stage.id);
+                  setDraggedDealId(null);
+                }}
+              >
                 <header className="kanban-header">
                   <div className="flex items-center gap-2"><span className="stage-dot" /><h2>{stage.label}</h2><Badge variant="secondary">{stageDeals.length}</Badge></div>
                   <span>{euros.format(stageDeals.reduce((sum, deal) => sum + deal.amount, 0))}</span>
                 </header>
                 <div className="space-y-3">
                   {stageDeals.map((deal) => (
-                    <article className="deal-card" key={deal.id}>
+                    <article className="deal-card" key={deal.id} draggable onDragStart={() => setDraggedDealId(deal.id)} onDragEnd={() => setDraggedDealId(null)}>
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0"><h3 className="truncate text-sm font-semibold text-slate-950">{deal.name}</h3><p className="mt-1 flex items-center gap-1.5 truncate text-xs text-slate-500"><Building2 className="size-3.5" />{deal.company}</p></div>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="size-7 shrink-0"><MoreHorizontal className="size-4" /><span className="sr-only">Actions</span></Button></DropdownMenuTrigger>
-                          <DropdownMenuContent align="end"><DropdownMenuLabel>Opportunité</DropdownMenuLabel><DropdownMenuItem onClick={() => toast.info("La fiche détaillée sera reliée à l’objet Opportunité.")}>Ouvrir la fiche</DropdownMenuItem><DropdownMenuSeparator /><DropdownMenuItem onClick={() => onAdvance(deal)}>Passer à l’étape suivante</DropdownMenuItem></DropdownMenuContent>
+                          <DropdownMenuContent align="end"><DropdownMenuLabel>Déplacer l’opportunité</DropdownMenuLabel>{stages.filter((item) => item.id !== deal.stage).map((item) => <DropdownMenuItem key={item.id} onClick={() => onMove(deal, item.id)}>Vers {item.label}</DropdownMenuItem>)}<DropdownMenuSeparator /><DropdownMenuItem onClick={() => toast.info("La fiche 360° sera reliée à l’objet Opportunité.")}>Ouvrir la fiche</DropdownMenuItem></DropdownMenuContent>
                         </DropdownMenu>
                       </div>
                       <p className="mt-4 text-lg font-semibold tracking-[-0.03em] text-slate-950">{euros.format(deal.amount)}</p>
@@ -447,6 +352,8 @@ function PipelineView({ deals, onAdvance, onOpenCreate, query }: { deals: Deal[]
                         <span>{deal.confidence} %</span>
                         <span className="flex items-center gap-1"><Calendar className="size-3.5" />{deal.due}</span>
                       </div>
+                      <label className="sr-only" htmlFor={`move-${deal.id}`}>Déplacer {deal.name}</label>
+                      <Select value={deal.stage} onValueChange={(value) => onMove(deal, value as Stage)}><SelectTrigger id={`move-${deal.id}`} className="mt-3 h-8 w-full text-xs"><SelectValue /></SelectTrigger><SelectContent>{stages.map((item) => <SelectItem key={item.id} value={item.id}>{item.label}</SelectItem>)}</SelectContent></Select>
                     </article>
                   ))}
                   {stageDeals.length === 0 ? <div className="kanban-empty">Aucune opportunité</div> : null}
@@ -773,11 +680,16 @@ function AuditView({ items }: { items: AuditItem[] }) {
 export function CRMShell({ user }: { user: CRMUser }) {
   const [view, setView] = useState<View>("dashboard");
   const [sessionUser, setSessionUser] = useState<SessionUser | null>(null);
-  const [deals, setDeals] = useState<Deal[]>(demoDeals);
-  const [query, setQuery] = useState("");
+  const [deals, setDeals] = useState<Deal[]>([]);
+  const query = "";
+  const [commandOpen, setCommandOpen] = useState(false);
+  const [density, setDensity] = useState<"comfortable" | "compact">(() => {
+    if (typeof window === "undefined") return "comfortable";
+    return window.localStorage.getItem("clarity-density") === "compact" ? "compact" : "comfortable";
+  });
   const [createOpen, setCreateOpen] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [audit, setAudit] = useState(initialAudit);
+  const [audit, setAudit] = useState<AuditItem[]>([]);
   const [form, setForm] = useState({ name: "", company: "", amount: "", stage: "qualification" as Stage });
 
   useEffect(() => {
@@ -796,7 +708,7 @@ export function CRMShell({ user }: { user: CRMUser }) {
         response.ok ? (response.json() as Promise<{ items: Record<string, unknown>[] }>) : { items: [] },
       )
       .then((payload) => {
-        if (!active || !Array.isArray(payload.items) || payload.items.length === 0) return;
+        if (!active || !Array.isArray(payload.items)) return;
         const persisted: Deal[] = payload.items.map((item: Record<string, unknown>) => ({
           id: `p${item.id}`,
           name: String(item.name),
@@ -808,15 +720,38 @@ export function CRMShell({ user }: { user: CRMUser }) {
           confidence: 30,
           saved: true,
         }));
-        setDeals([...demoDeals, ...persisted]);
+        setDeals(persisted);
       })
       .catch(() => undefined);
     return () => { active = false; };
   }, [user.email]);
 
+  useEffect(() => {
+    document.body.dataset.density = density;
+    window.localStorage.setItem("clarity-density", density);
+    return () => { delete document.body.dataset.density; };
+  }, [density]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const isTyping = target?.matches("input, textarea, [contenteditable='true']");
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setCommandOpen(true);
+      } else if (event.key === "/" && !isTyping) {
+        event.preventDefault();
+        setCommandOpen(true);
+      } else if (event.key === "Escape") {
+        setCommandOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
   const title = viewTitles[view];
   const canAdminister = sessionUser?.role === "admin";
-  const filteredCount = useMemo(() => deals.filter((deal) => `${deal.name} ${deal.company}`.toLowerCase().includes(query.toLowerCase())).length, [deals, query]);
 
   const pushAudit = (item: AuditItem) => setAudit((current) => [item, ...current]);
 
@@ -856,31 +791,45 @@ export function CRMShell({ user }: { user: CRMUser }) {
     }
   };
 
-  const advanceDeal = async (deal: Deal) => {
+  const moveDeal = async (deal: Deal, targetStage: Stage, isUndo = false) => {
+    if (deal.stage === targetStage) return;
+    const previousStage = deal.stage;
+    const targetLabel = stages.find((stage) => stage.id === targetStage)?.label ?? targetStage;
     const index = stages.findIndex((stage) => stage.id === deal.stage);
-    if (index === stages.length - 1) { toast.info("Cette opportunité est déjà gagnée."); return; }
-    const nextStage = stages[index + 1];
-    setDeals((current) => current.map((item) => item.id === deal.id ? { ...item, stage: nextStage.id, confidence: Math.min(100, item.confidence + 20) } : item));
-    pushAudit({ action: "Opportunité déplacée", detail: `${deal.name} → ${nextStage.label}`, actor: "Mélanie Laurent", time: "À l’instant", tone: "blue" });
-    toast.success(`${deal.name} passe à « ${nextStage.label} »`);
-    if (deal.saved) {
-      fetch("/api/opportunities", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: Number(deal.id.slice(1)), stage: nextStage.id }) })
-        .then((response) => {
-          if (!response.ok) throw new Error("Mise à jour refusée côté serveur.");
-        })
-        .catch((error) => toast.error(error instanceof Error ? error.message : "Mise à jour refusée."));
+    if (index === -1) return;
+    setDeals((current) => current.map((item) => item.id === deal.id ? { ...item, stage: targetStage } : item));
+    try {
+      if (deal.saved) {
+        const response = await fetch("/api/opportunities", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: Number(deal.id.slice(1)), stage: targetStage }) });
+        if (!response.ok) {
+          const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+          throw new Error(payload?.error ?? "Mise à jour refusée côté serveur.");
+        }
+      }
+      pushAudit({ action: "Opportunité déplacée", detail: `${deal.name} → ${targetLabel}`, actor: user.displayName, time: "À l’instant", tone: "blue" });
+      if (isUndo) toast.info("Déplacement annulé.");
+      else toast.success(`${deal.name} déplacée vers « ${targetLabel} »`, { action: { label: "Annuler", onClick: () => { void moveDeal({ ...deal, stage: targetStage }, previousStage, true); } } });
+    } catch (error) {
+      setDeals((current) => current.map((item) => item.id === deal.id ? { ...item, stage: previousStage } : item));
+      toast.error(error instanceof Error ? error.message : "Mise à jour refusée.");
     }
   };
 
+  const advanceDeal = (deal: Deal) => {
+    const index = stages.findIndex((stage) => stage.id === deal.stage);
+    if (index === -1 || index === stages.length - 1) { toast.info("Cette opportunité est déjà gagnée."); return; }
+    void moveDeal(deal, stages[index + 1].id);
+  };
+
   const renderView = () => {
-    if (view === "dashboard") return <DashboardView onNavigate={setView} />;
-    if (view === "pipeline") return <PipelineView deals={deals} onAdvance={advanceDeal} onOpenCreate={() => setCreateOpen(true)} query={query} />;
+    if (view === "dashboard") return <DashboardView deals={deals} onNavigate={setView} onAdvance={advanceDeal} />;
+    if (view === "pipeline") return <PipelineView deals={deals} onMove={moveDeal} onOpenCreate={() => setCreateOpen(true)} query={query} />;
     if (view === "objects") return <ObjectsView />;
     if (view === "automations") return <AutomationsView />;
-    if (view === "rights") return canAdminister ? <RightsView /> : <DashboardView onNavigate={setView} />;
-    if (view === "modules") return canAdminister ? <ModulesView /> : <DashboardView onNavigate={setView} />;
-    if (view === "data") return canAdminister ? <DataView deals={deals} onAudit={pushAudit} /> : <DashboardView onNavigate={setView} />;
-    return canAdminister ? <AuditView items={audit} /> : <DashboardView onNavigate={setView} />;
+    if (view === "rights") return canAdminister ? <RightsView /> : <DashboardView deals={deals} onNavigate={setView} onAdvance={advanceDeal} />;
+    if (view === "modules") return canAdminister ? <ModulesView /> : <DashboardView deals={deals} onNavigate={setView} onAdvance={advanceDeal} />;
+    if (view === "data") return canAdminister ? <DataView deals={deals} onAudit={pushAudit} /> : <DashboardView deals={deals} onNavigate={setView} onAdvance={advanceDeal} />;
+    return canAdminister ? <AuditView items={audit} /> : <DashboardView deals={deals} onNavigate={setView} onAdvance={advanceDeal} />;
   };
 
   return (
@@ -899,8 +848,8 @@ export function CRMShell({ user }: { user: CRMUser }) {
 
       <SidebarInset>
         <header className="topbar">
-          <div className="flex items-center gap-3"><SidebarTrigger /><div className="hidden h-5 w-px bg-slate-200 sm:block" /><div className="search-box"><Search className="size-4" /><Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Rechercher dans le CRM…" aria-label="Rechercher dans le CRM" /><kbd>⌘ K</kbd>{query ? <span className="hidden text-xs text-slate-500 md:inline">{filteredCount} résultat{filteredCount > 1 ? "s" : ""}</span> : null}</div></div>
-          <div className="flex items-center gap-2"><Button variant="ghost" size="icon"><Bell className="size-4" /><span className="sr-only">Notifications</span></Button><Dialog open={createOpen} onOpenChange={setCreateOpen}><DialogTrigger asChild><Button><Plus className="size-4" />Créer</Button></DialogTrigger><DialogContent><form onSubmit={createDeal}><DialogHeader><DialogTitle>Nouvelle opportunité</DialogTitle><DialogDescription>Les champs essentiels uniquement. Vous pourrez enrichir la fiche ensuite.</DialogDescription></DialogHeader><div className="my-6 grid gap-4"><label className="form-field"><span>Nom de l’opportunité</span><Input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Ex. Renouvellement infrastructure" maxLength={100} /></label><label className="form-field"><span>Société</span><Input value={form.company} onChange={(event) => setForm({ ...form, company: event.target.value })} placeholder="Nom du compte" maxLength={100} /></label><div className="grid grid-cols-2 gap-3"><label className="form-field"><span>Montant estimé</span><Input value={form.amount} onChange={(event) => setForm({ ...form, amount: event.target.value })} type="number" min="1" step="100" placeholder="25000" /></label><label className="form-field"><span>Étape</span><Select value={form.stage} onValueChange={(value) => setForm({ ...form, stage: value as Stage })}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent>{stages.slice(0, 4).map((stage) => <SelectItem value={stage.id} key={stage.id}>{stage.label}</SelectItem>)}</SelectContent></Select></label></div></div><DialogFooter><Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>Annuler</Button><Button type="submit" disabled={saving}>{saving ? <RefreshCw className="size-4 animate-spin" /> : <Plus className="size-4" />}{saving ? "Enregistrement…" : "Créer l’opportunité"}</Button></DialogFooter></form></DialogContent></Dialog></div>
+          <div className="flex items-center gap-3"><SidebarTrigger /><div className="hidden h-5 w-px bg-slate-200 sm:block" /><button type="button" className="search-box text-left" onClick={() => setCommandOpen(true)} aria-label="Ouvrir la recherche globale"><Search className="size-4" /><span className="flex-1 text-sm text-slate-500">Rechercher dans Clarity…</span><kbd>⌘ K</kbd></button></div>
+          <div className="flex items-center gap-2"><Button variant="ghost" size="icon" onClick={() => toast.info("Aucune notification non lue.")}><Bell className="size-4" /><span className="sr-only">Notifications</span></Button><Button variant="ghost" size="sm" className="hidden md:inline-flex" onClick={() => setDensity((current) => current === "comfortable" ? "compact" : "comfortable")}>{density === "comfortable" ? "Compact" : "Confort"}</Button><Dialog open={createOpen} onOpenChange={setCreateOpen}><DialogTrigger asChild><Button><Plus className="size-4" />Créer</Button></DialogTrigger><DialogContent><form onSubmit={createDeal}><DialogHeader><DialogTitle>Nouvelle opportunité</DialogTitle><DialogDescription>Les champs essentiels uniquement. Vous pourrez enrichir la fiche ensuite.</DialogDescription></DialogHeader><div className="my-6 grid gap-4"><label className="form-field"><span>Nom de l’opportunité</span><Input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Ex. Renouvellement infrastructure" maxLength={100} /></label><label className="form-field"><span>Société</span><Input value={form.company} onChange={(event) => setForm({ ...form, company: event.target.value })} placeholder="Nom du compte" maxLength={100} /></label><div className="grid grid-cols-2 gap-3"><label className="form-field"><span>Montant estimé</span><Input value={form.amount} onChange={(event) => setForm({ ...form, amount: event.target.value })} type="number" min="1" step="100" placeholder="25000" /></label><label className="form-field"><span>Étape</span><Select value={form.stage} onValueChange={(value) => setForm({ ...form, stage: value as Stage })}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent>{stages.slice(0, 4).map((stage) => <SelectItem value={stage.id} key={stage.id}>{stage.label}</SelectItem>)}</SelectContent></Select></label></div></div><DialogFooter><Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>Annuler</Button><Button type="submit" disabled={saving}>{saving ? <RefreshCw className="size-4 animate-spin" /> : <Plus className="size-4" />}{saving ? "Enregistrement…" : "Créer l’opportunité"}</Button></DialogFooter></form></DialogContent></Dialog></div>
         </header>
 
         <div className="page-shell">
@@ -908,6 +857,19 @@ export function CRMShell({ user }: { user: CRMUser }) {
           {renderView()}
         </div>
       </SidebarInset>
+      <nav className="mobile-nav fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 border-t border-slate-200 bg-white/95 px-2 pt-2 backdrop-blur md:hidden" aria-label="Navigation mobile">
+        <button type="button" aria-current={view === "dashboard" ? "page" : undefined} className={`flex flex-col items-center justify-center gap-0.5 text-[11px] ${view === "dashboard" ? "font-semibold text-blue-600" : "text-slate-500"}`} onClick={() => setView("dashboard")}><LayoutDashboard className="size-4" />Accueil</button>
+        <button type="button" aria-current={view === "pipeline" ? "page" : undefined} className={`flex flex-col items-center justify-center gap-0.5 text-[11px] ${view === "pipeline" ? "font-semibold text-blue-600" : "text-slate-500"}`} onClick={() => setView("pipeline")}><Columns3 className="size-4" />Pipeline</button>
+        <button type="button" className="flex flex-col items-center justify-center gap-0.5 text-[11px] text-slate-500" onClick={() => setCreateOpen(true)}><Plus className="size-4" />Créer</button>
+        <button type="button" className="flex flex-col items-center justify-center gap-0.5 text-[11px] text-slate-500" onClick={() => setCommandOpen(true)}><Search className="size-4" />Rechercher</button>
+      </nav>
+      <CommandPalette
+        open={commandOpen}
+        onOpenChange={setCommandOpen}
+        onNavigate={(target) => setView(target as CrmCommandView)}
+        onCreateOpportunity={() => setCreateOpen(true)}
+        canAdminister={canAdminister}
+      />
       <Toaster richColors position="bottom-right" />
     </SidebarProvider>
   );
