@@ -18,20 +18,20 @@ Statuts autorisés : `VALIDÉ`, `IMPLÉMENTÉ_NON_TESTÉ`, `BACKEND_SEUL`, `UI_S
 | CRM-05 | v0.2 | Archivage logique | `crm_records.status` | DELETE `/api/crm` | console principale | oui | oui | oui | tests de politique ; recette PostgreSQL à rejouer | IMPLÉMENTÉ_NON_TESTÉ |
 | REL-01 | v0.2 | Relations entre objets | `crm_relations` | `/api/crm/relations` | non branchées à la fiche principale | oui | oui | création/suppression | E2E legacy D1 seulement, invalide pour runtime cible | BACKEND_SEUL |
 | TIME-01 | v0.2 | Timeline métier | `crm_timeline_events` | `/api/crm/timeline` | affichage fiche | oui | oui | écritures manuelles/métier | lint/typecheck ; recette PostgreSQL à rejouer | PARTIEL |
-| DOC-01 | v0.2 | Stockage documentaire binaire POSIX | absent | absent | faux document JSON historique seulement | absent | absent | absent | aucun | À_FAIRE |
+| DOC-01 | v0.2 | Stockage documentaire binaire POSIX | `crm_documents` + répertoire POSIX isolé | `/api/documents`, téléchargement protégé | fiche CRM : upload, téléchargement, archivage | oui | oui | upload/download/archive | lint/typecheck/tests ; recette POSIX PostgreSQL ajoutée, à rejouer en CI | IMPLÉMENTÉ_NON_TESTÉ |
 | SRCH-01 | v0.2 | Recherche globale navigable | `crm_records` | `/api/crm/search` | pas de navigation globale | oui | oui | n/a | tests de politique ; recette PostgreSQL à rejouer | BACKEND_SEUL |
-| NOTIF-01 | v0.2 | Notifications internes persistantes | absent | absent | absent | absent | absent | absent | aucun | À_FAIRE |
+| NOTIF-01 | v0.2 | Notifications internes persistantes | `crm_notifications` | `/api/notifications`, action d'automatisation | consultation et marquage lu | destinataire serveur | oui | lecture | lint/typecheck/tests ; recette POSIX PostgreSQL ajoutée, à rejouer en CI | IMPLÉMENTÉ_NON_TESTÉ |
 | DASH-01 | v0.2 | KPI calculés depuis données réelles | opportunités, tâches, timeline | `/api/dashboard` | console principale | oui | oui | n/a | tests unitaires, lint, typecheck et build Edge ; recette PostgreSQL à rejouer | IMPLÉMENTÉ_NON_TESTÉ |
 | CFG-01 | v0.3 | Configurations versionnées | `crm_configurations`, versions | `/api/configurations` | console configuration | admin | oui | oui | tests source ; recette PostgreSQL à rejouer | PARTIEL |
 | CFG-02 | v0.3 | Objets/pipelines/formulaires configurables | configurations | validation runtime | formulaires branchés ; objets/pipelines en JSON avancé | oui | oui | oui | E2E legacy D1 seulement | PARTIEL |
 | CFG-03 | v0.3 | Historique et restauration | versions de configuration | PATCH restore | UI présente | admin | oui | oui | E2E legacy D1 seulement | PARTIEL |
 | MOD-01 | v0.3 | Modules persistants et dépendances | configuration `module` | backend de dépendances | pas d'écran modules réel | admin | oui | oui | E2E legacy D1 seulement | BACKEND_SEUL |
-| AUTO-01 | v0.3 | Automatisations persistantes | configuration + `automation_runs` | moteur existant | liste/activation UI | oui | oui | replay/audit | E2E legacy D1 seulement | PARTIEL |
-| AUTO-02 | v0.3 | Limites, corrélation, boucles, retry borné | `automation_runs` | protections incomplètes | n/a | oui | oui | partiel | aucun test complet | À_FAIRE |
+| AUTO-01 | v0.3 | Automatisations persistantes | configuration + `automation_runs` | moteur existant enrichi | liste/activation et journal UI | oui | oui | replay/audit | tests de politique ; recette PostgreSQL d'automatisation reste à ajouter | PARTIEL |
+| AUTO-02 | v0.3 | Limites, corrélation, boucles, retry borné | `automation_runs` | 10 actions, corrélation, profondeur, prévention par corrélation, timeout webhook ; pas de worker/retry asynchrone | journal UI | oui | oui | oui | lint/typecheck/tests ; recette PostgreSQL complète à ajouter | PARTIEL |
 | WEB-01 | v0.3 | Webhooks sortants et anti-SSRF | configs + deliveries | dispatcher sécurisé | journal UI | admin | oui | oui | `webhook-security.test.mjs` ; recette E2E PostgreSQL à rejouer | IMPLÉMENTÉ_NON_TESTÉ |
-| IMP-01 | v0.3 | Import CSV contrôlé | absent | aperçu UI historique non persistant | simulé hors route principale | absent | absent | absent | aucun | À_FAIRE |
-| EXP-01 | v0.3 | Export CSV protégé | `crm_records` | `/api/crm/export` | non exposé dans console | oui | oui | absent | recette POSIX à rejouer | BACKEND_SEUL |
-| EXP-02 | v0.3 | Export XLSX protégé | absent | absent | absent | absent | absent | absent | aucun | À_FAIRE |
+| IMP-01 | v0.3 | Import CSV contrôlé | `crm_import_jobs`, `crm_records` | `/api/crm/import` : UTF-8, preview, mapping, doublons, validation, lots contrôlés | console CRM : fichier, aperçu, confirmation, rapport | oui | oui | oui | test parser ; recette POSIX PostgreSQL ajoutée, à rejouer en CI | IMPLÉMENTÉ_NON_TESTÉ |
+| EXP-01 | v0.3 | Export CSV protégé | `crm_records` | `/api/crm/export`, scope export et neutralisation formule | console CRM | oui | oui | non | recette POSIX PostgreSQL ajoutée, à rejouer en CI | IMPLÉMENTÉ_NON_TESTÉ |
+| EXP-02 | v0.3 | Export XLSX protégé | `crm_records` | `/api/crm/export?format=xlsx`, XLSX minimal sans formule | console CRM | oui | oui | non | recette POSIX PostgreSQL ajoutée, à rejouer en CI | IMPLÉMENTÉ_NON_TESTÉ |
 | D1-01 | legacy | D1 comme import vers PostgreSQL uniquement | `legacy/d1` | `migrate-legacy-d1.mjs` | n/a | opérateur | séparé | import | CI legacy à rejouer avec PostgreSQL | IMPLÉMENTÉ_NON_TESTÉ |
 | D1-02 | legacy | Runtime/recettes D1 anciennes | D1 local | anciens scripts `ci-e2e-*` | n/a | n/a | n/a | n/a | incompatibles avec session native PostgreSQL | HORS_PÉRIMÈTRE |
 | BUILD-01 | qualité | Installation, lint, tests, typecheck | n/a | npm | n/a | n/a | n/a | n/a | passés sur HEAD `4b343ab` | VALIDÉ |
@@ -40,6 +40,6 @@ Statuts autorisés : `VALIDÉ`, `IMPLÉMENTÉ_NON_TESTÉ`, `BACKEND_SEUL`, `UI_S
 
 ## Décision de fermeture
 
-Le statut actuel de `clarity-crm_v1.0-closed` est **NON FERMÉ**. Les bloqueurs de fermeture sont au minimum DOC-01, NOTIF-01, IMP-01, EXP-02, AUTO-02, les fiches/relations UI incomplètes et les recettes PostgreSQL réelles non rejouées.
+Le statut actuel de `clarity-crm_v1.0-closed` est **NON FERMÉ**. Les bloqueurs de fermeture sont au minimum AUTO-01/02 (recette et retry asynchrone), les fiches/relations UI incomplètes et les recettes PostgreSQL réelles non rejouées.
 
 La prochaine étape produit demeure `clarity-crm_v1.1`, mais elle ne doit pas commencer avant la résolution explicite des lignes de fermeture ci-dessus ou une décision de réduction de périmètre documentée.

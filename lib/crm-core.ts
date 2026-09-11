@@ -47,11 +47,11 @@ export class CrmNotFoundError extends Error {
 
 export async function listCrmRecords(
   actor: AuthContext,
-  input: { type: string; status?: string | null; q?: string | null; limit?: number; offset?: number },
+  input: { type: string; status?: string | null; q?: string | null; limit?: number; offset?: number; action?: "read" | "export" },
 ) {
   const type = normalizeRecordType(input.type);
   if (!type) throw new CrmValidationError("Type CRM invalide.");
-  const scope = await requireRecordPermission(actor, type, "read");
+  const scope = await requireRecordPermission(actor, type, input.action ?? "read");
   const filters = [eq(crmRecords.tenantId, actor.tenantId), eq(crmRecords.type, type)];
   if (input.status) {
     const status = normalizeRecordStatus(input.status, null);
@@ -182,6 +182,12 @@ export async function updateCrmRecord(actor: AuthContext, id: string, patch: Rec
     after: record,
   });
   await runSideEffects(actor, "record.updated", record);
+  if (record.status !== existing.status) {
+    await runAutomations(actor, "record.status_changed", record);
+  }
+  if (record.data.stage !== existing.data.stage) {
+    await runAutomations(actor, "record.pipeline_changed", record);
+  }
   return record;
 }
 

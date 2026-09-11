@@ -17,6 +17,8 @@ const allowedEvents = new Set<AutomationEvent>([
   "record.created",
   "record.updated",
   "record.archived",
+  "record.status_changed",
+  "record.pipeline_changed",
 ]);
 
 export async function GET(request: NextRequest) {

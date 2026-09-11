@@ -5,13 +5,16 @@ PORT="${PORT:-5173}"
 BASE="http://127.0.0.1:${PORT}"
 COOKIE_JAR="$(mktemp)"
 SERVER_LOG="$(mktemp)"
+DOCUMENTS_DIR="$(mktemp -d)"
+IMPORT_CSV="$(mktemp --suffix=.csv)"
 cleanup() {
   [[ -n "${SERVER_PID:-}" ]] && kill "$SERVER_PID" 2>/dev/null || true
-  rm -f "$COOKIE_JAR" "$SERVER_LOG"
+  rm -f "$COOKIE_JAR" "$SERVER_LOG" "$IMPORT_CSV"
+  rm -rf "$DOCUMENTS_DIR"
 }
 trap cleanup EXIT
 
-npm start >"$SERVER_LOG" 2>&1 &
+CLARITY_DOCUMENTS_DIR="$DOCUMENTS_DIR" npm start >"$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
 for _ in $(seq 1 60); do
   code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 2 "$BASE/api/health/ready" || true)"
@@ -49,10 +52,43 @@ code="$(curl -sS -b "$COOKIE_JAR" -o /dev/null -w '%{http_code}' "$BASE/api/crm/
 [[ "$code" == 200 ]] || exit 1
 code="$(curl -sS -b "$COOKIE_JAR" -o /dev/null -w '%{http_code}' "$BASE/api/crm/export?type=company")"
 [[ "$code" == 200 ]] || exit 1
-echo "[OK] CRM get/search/export"
+code="$(curl -sS -b "$COOKIE_JAR" -o /tmp/clarity-export.xlsx -w '%{http_code}' "$BASE/api/crm/export?type=company&format=xlsx")"
+[[ "$code" == 200 ]] || exit 1
+[[ "$(head -c 2 /tmp/clarity-export.xlsx)" == "PK" ]] || { echo "invalid xlsx" >&2; exit 1; }
+echo "[OK] CRM get/search/export CSV+XLSX"
+
+automation_payload='{"kind":"automation","name":"CI notification owner","definition":{"key":"ci_notify_owner","trigger":{"event":"record.created","type":"company"},"conditions":[],"actions":[{"kind":"notify_owner","message":"Création {{title}}"}]}}'
+code="$(curl -sS -b "$COOKIE_JAR" -o /tmp/clarity-automation.json -w '%{http_code}' -H 'content-type: application/json' -d "$automation_payload" "$BASE/api/configurations")"
+[[ "$code" == 201 ]] || { cat /tmp/clarity-automation.json >&2; exit 1; }
+echo "[OK] persistent automation configuration"
+
+printf 'title,status,email\nCI Imported Company,active,import@example.test\n' >"$IMPORT_CSV"
+code="$(curl -sS -b "$COOKIE_JAR" -o /tmp/clarity-import-preview.json -w '%{http_code}' -F "type=company" -F "file=@${IMPORT_CSV};type=text/csv" "$BASE/api/crm/import")"
+[[ "$code" == 200 ]] || { cat /tmp/clarity-import-preview.json >&2; exit 1; }
+[[ "$(jq -r '.dryRun' /tmp/clarity-import-preview.json)" == true ]] || exit 1
+code="$(curl -sS -b "$COOKIE_JAR" -o /tmp/clarity-import.json -w '%{http_code}' -F "type=company" -F "confirm=true" -F "file=@${IMPORT_CSV};type=text/csv" "$BASE/api/crm/import")"
+[[ "$code" == 201 ]] || { cat /tmp/clarity-import.json >&2; exit 1; }
+[[ "$(jq -r '.job.importedRows' /tmp/clarity-import.json)" == 1 ]] || exit 1
+echo "[OK] CSV preview + controlled import"
+
+printf 'document integration test\n' >/tmp/clarity-document.txt
+code="$(curl -sS -b "$COOKIE_JAR" -o /tmp/clarity-document.json -w '%{http_code}' -F "recordId=${record_id}" -F "file=@/tmp/clarity-document.txt;type=text/plain" "$BASE/api/documents")"
+[[ "$code" == 201 ]] || { cat /tmp/clarity-document.json >&2; exit 1; }
+document_id="$(jq -r '.item.id' /tmp/clarity-document.json)"
+code="$(curl -sS -b "$COOKIE_JAR" -o /tmp/clarity-document-download.txt -w '%{http_code}' "$BASE/api/documents/download?id=${document_id}")"
+[[ "$code" == 200 && "$(cat /tmp/clarity-document-download.txt)" == "document integration test" ]] || exit 1
+[[ -f "$(find "$DOCUMENTS_DIR" -type f -print -quit)" ]] || { echo "document not stored" >&2; exit 1; }
+echo "[OK] protected POSIX document storage/download"
 
 [[ -n "${DATABASE_URL:-}" ]] || { echo "DATABASE_URL absent pour la recette PostgreSQL" >&2; exit 1; }
 user_id="$(psql -X --dbname="$DATABASE_URL" -Atqc "SELECT id FROM users WHERE email='${CLARITY_ADMIN_EMAIL//\'/\'\'}' LIMIT 1")"
+code="$(curl -sS -b "$COOKIE_JAR" -o /tmp/clarity-notifications.json -w '%{http_code}' "$BASE/api/notifications")"
+[[ "$code" == 200 && "$(jq -r '.unread' /tmp/clarity-notifications.json)" -ge 1 ]] || exit 1
+notification_id="$(jq -r '.items[] | select(.type == "automation") | .id' /tmp/clarity-notifications.json | head -n 1)"
+[[ -n "$notification_id" ]] || exit 1
+code="$(curl -sS -b "$COOKIE_JAR" -o /dev/null -w '%{http_code}' -X PATCH -H 'content-type: application/json' -d "$(jq -nc --arg id "$notification_id" '{id:$id}')" "$BASE/api/notifications")"
+[[ "$code" == 200 ]] || exit 1
+echo "[OK] automation run + persistent recipient notifications"
 psql -X --dbname="$DATABASE_URL" -v ON_ERROR_STOP=1 -v uid="$user_id" <<'SQL'
 INSERT INTO organizations(id,name) VALUES ('ci-foreign','CI Foreign') ON CONFLICT DO NOTHING;
 INSERT INTO teams(id,tenant_id,name) VALUES ('ci-foreign-team','ci-foreign','Foreign') ON CONFLICT DO NOTHING;
@@ -65,6 +101,10 @@ code="$(curl -sS -b "$COOKIE_JAR" -o /dev/null -w '%{http_code}' "$BASE/api/crm?
 code="$(curl -sS -b "$COOKIE_JAR" -H 'x-clarity-tenant-id: ci-foreign' -o /dev/null -w '%{http_code}' "$BASE/api/session")"
 [[ "$code" == 403 ]] || { echo "tenant selector bypass returned $code" >&2; exit 1; }
 echo "[OK] cross-tenant IDOR/BOLA blocked"
+
+code="$(curl -sS -b "$COOKIE_JAR" -o /dev/null -w '%{http_code}' -X POST -H 'sec-fetch-site: cross-site' -H 'content-type: application/json' -d '{"type":"company","title":"Forbidden cross-site","data":{}}' "$BASE/api/crm")"
+[[ "$code" == 403 ]] || { echo "cross-site mutation returned $code" >&2; exit 1; }
+echo "[OK] same-origin mutation enforcement"
 
 code="$(curl -sS -b "$COOKIE_JAR" -o /dev/null -w '%{http_code}' -X DELETE "$BASE/api/crm?id=${record_id}")"
 [[ "$code" == 200 ]] || exit 1
