@@ -1,4 +1,6 @@
-# Clarity CRM — audit UX/UI et traçabilité
+# Clarity CRM — archive d’audit UX/UI
+
+> Ce document est une archive du merge UX/UI `85c9fe1`. Il ne constitue pas une matrice de traçabilité ni une déclaration de fonctionnement actuel. La référence unique est [`docs/traceability-v1.0.md`](traceability-v1.0.md).
 
 ## Baseline auditée
 
@@ -13,13 +15,13 @@
 | --- | --- | --- |
 | Routes API, `lib/authz*`, politiques CRM, schéma et migrations | CONSERVER | Source de vérité pour les permissions, le tenant et les contrats. |
 | `components/ui/*` (Shadcn, Sonner, Command, Sidebar) | CONSERVER | Primitives accessibles déjà installées et compatibles. |
-| `app/crm-shell.tsx` | REFACTORER par phases | Shell fonctionnel mais monolithique, données démo et faux raccourci de recherche. |
+| `app/crm-shell.tsx` | RETIRÉ DE LA ROUTE PRINCIPALE | Contient des données de démonstration ; `/` utilise désormais `V1Console` reliée aux API persistantes. |
 | `app/v1/v1-console.tsx` | COMPLÉTER | Fonctionnalités réelles CRM/configuration déjà reliées aux API, mais UX technique à intégrer progressivement. |
 | `app/globals.css` | COMPLÉTER | Tokens existants ; consolidation nécessaire pour la direction visuelle officielle. |
 | Backend et modèle de données | CONSERVER | Une refonte visuelle ne justifie aucune modification métier. |
 | API `/api/crm/search` | RÉUTILISER | Recherche serveur déjà authentifiée, tenant-aware et bornée. |
 
-## Matrice de traçabilité
+## Historique des décisions UX du merge
 
 | Exigence | Composant / page | Implémentation | Test | Statut |
 | --- | --- | --- | --- | --- |
