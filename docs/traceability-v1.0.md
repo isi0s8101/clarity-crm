@@ -21,7 +21,7 @@ Statuts autorisés : `VALIDÉ`, `IMPLÉMENTÉ_NON_TESTÉ`, `BACKEND_SEUL`, `UI_S
 | DOC-01 | v0.2 | Stockage documentaire binaire POSIX | absent | absent | faux document JSON historique seulement | absent | absent | absent | aucun | À_FAIRE |
 | SRCH-01 | v0.2 | Recherche globale navigable | `crm_records` | `/api/crm/search` | pas de navigation globale | oui | oui | n/a | tests de politique ; recette PostgreSQL à rejouer | BACKEND_SEUL |
 | NOTIF-01 | v0.2 | Notifications internes persistantes | absent | absent | absent | absent | absent | absent | aucun | À_FAIRE |
-| DASH-01 | v0.2 | KPI calculés depuis données réelles | opportunités/records | absent | ancien dashboard simulé hors route principale | n/a | n/a | n/a | aucun | À_FAIRE |
+| DASH-01 | v0.2 | KPI calculés depuis données réelles | opportunités, tâches, timeline | `/api/dashboard` | console principale | oui | oui | n/a | tests unitaires, lint, typecheck et build Edge ; recette PostgreSQL à rejouer | IMPLÉMENTÉ_NON_TESTÉ |
 | CFG-01 | v0.3 | Configurations versionnées | `crm_configurations`, versions | `/api/configurations` | console configuration | admin | oui | oui | tests source ; recette PostgreSQL à rejouer | PARTIEL |
 | CFG-02 | v0.3 | Objets/pipelines/formulaires configurables | configurations | validation runtime | formulaires branchés ; objets/pipelines en JSON avancé | oui | oui | oui | E2E legacy D1 seulement | PARTIEL |
 | CFG-03 | v0.3 | Historique et restauration | versions de configuration | PATCH restore | UI présente | admin | oui | oui | E2E legacy D1 seulement | PARTIEL |
@@ -40,6 +40,6 @@ Statuts autorisés : `VALIDÉ`, `IMPLÉMENTÉ_NON_TESTÉ`, `BACKEND_SEUL`, `UI_S
 
 ## Décision de fermeture
 
-Le statut actuel de `clarity-crm_v1.0-closed` est **NON FERMÉ**. Les bloqueurs de fermeture sont au minimum DOC-01, NOTIF-01, DASH-01, IMP-01, EXP-02, AUTO-02, les fiches/relations UI incomplètes et les recettes PostgreSQL réelles non rejouées.
+Le statut actuel de `clarity-crm_v1.0-closed` est **NON FERMÉ**. Les bloqueurs de fermeture sont au minimum DOC-01, NOTIF-01, IMP-01, EXP-02, AUTO-02, les fiches/relations UI incomplètes et les recettes PostgreSQL réelles non rejouées.
 
 La prochaine étape produit demeure `clarity-crm_v1.1`, mais elle ne doit pas commencer avant la résolution explicite des lignes de fermeture ci-dessus ou une décision de réduction de périmètre documentée.

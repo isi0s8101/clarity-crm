@@ -54,7 +54,7 @@ Dette connue non bloquante pour le cœur CRM :
 
 Le moteur CRM universel, les configurations, formulaires, automatisations, modules, templates et webhooks existent à des niveaux différents de complétude. La racine `/` expose la console branchée aux API persistantes ; l'ancien cockpit UX de démonstration n'est plus la route principale.
 
-Les documents binaires POSIX, les notifications internes, les dashboards calculés, l'import CSV transactionnel et l'export XLSX restent des bloqueurs de fermeture. Ils ne sont pas annoncés comme opérationnels.
+Les documents binaires POSIX, les notifications internes, l'import CSV transactionnel et l'export XLSX restent des bloqueurs de fermeture. Ils ne sont pas annoncés comme opérationnels. Le dashboard actuel est calculé depuis les données CRM accessibles, mais attend encore une recette PostgreSQL complète.
 
 Les webhooks sortants sont soumis à une politique anti-SSRF avec HTTPS public, allowlist optionnelle, résolution DNS juste avant envoi, blocage des adresses privées/réservées et lecture bornée des réponses.
 
