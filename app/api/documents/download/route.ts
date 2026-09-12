@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 
 import { getDb } from "@/db";
-import { crmDocuments } from "@/db/schema";
+import { crmDocuments, crmDocumentVersions } from "@/db/schema";
 import { audit, authErrorResponse, requireRecordPermission, resolveAuthContext } from "@/lib/authz";
 import { crmErrorResponse, getCrmRecord } from "@/lib/crm-core";
 import { readStoredDocument } from "@/lib/documents";
@@ -13,6 +13,7 @@ export async function GET(request: NextRequest) {
   try {
     const actor = await resolveAuthContext(request);
     const id = request.nextUrl.searchParams.get("id") ?? "";
+    const requestedVersion = request.nextUrl.searchParams.get("version");
     const rows = await getDb().select().from(crmDocuments).where(
       and(eq(crmDocuments.id, id), eq(crmDocuments.tenantId, actor.tenantId), eq(crmDocuments.status, "active")),
     ).limit(1);
@@ -20,13 +21,19 @@ export async function GET(request: NextRequest) {
     if (!document) return NextResponse.json({ error: "Document introuvable." }, { status: 404 });
     await getCrmRecord(actor, document.recordId, "read");
     await requireRecordPermission(actor, "document", "read");
-    const content = await readStoredDocument(document.storageKey);
-    await audit(actor, { action: "document.downloaded", resourceType: "document", resourceId: id, result: "success" });
+    const version = requestedVersion === null ? null : Number(requestedVersion);
+    if (requestedVersion !== null && (!Number.isInteger(version) || version === null || version < 1)) return NextResponse.json({ error: "Version documentaire invalide." }, { status: 400 });
+    const selected = version === null
+      ? document
+      : (await getDb().select().from(crmDocumentVersions).where(and(eq(crmDocumentVersions.tenantId, actor.tenantId), eq(crmDocumentVersions.documentId, id), eq(crmDocumentVersions.version, version as number))).limit(1))[0];
+    if (!selected) return NextResponse.json({ error: "Version documentaire introuvable." }, { status: 404 });
+    const content = await readStoredDocument(selected.storageKey);
+    await audit(actor, { action: version === null ? "document.downloaded" : "document.version_downloaded", resourceType: "document", resourceId: id, result: "success", after: version === null ? undefined : { version } });
     return new Response(content, {
       headers: {
-        "content-type": document.mimeType,
+        "content-type": selected.mimeType,
         "content-length": String(content.length),
-        "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(document.normalizedName)}`,
+        "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(selected.normalizedName)}`,
         "cache-control": "private, no-store",
         "x-content-type-options": "nosniff",
       },

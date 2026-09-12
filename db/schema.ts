@@ -236,6 +236,11 @@ export const crmDocuments = pgTable(
     sizeBytes: integer("size_bytes").notNull(),
     sha256: text("sha256").notNull(),
     uploadedBy: text("uploaded_by").notNull().references(() => users.id, { onDelete: "restrict" }),
+    ownerId: text("owner_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    category: text("category").notNull().default(""),
+    tags: text("tags").notNull().default("[]"),
+    description: text("description").notNull().default(""),
+    currentVersion: integer("current_version").notNull().default(1),
     status: text("status").notNull().default("active"),
     createdAt: createdAt(),
     archivedAt: timestamp("archived_at", { withTimezone: true, mode: "string" }),
@@ -243,6 +248,29 @@ export const crmDocuments = pgTable(
   (table) => [
     uniqueIndex("idx_crm_documents_storage_key").on(table.storageKey),
     index("idx_crm_documents_record").on(table.tenantId, table.recordId, table.status, table.createdAt),
+  ],
+);
+
+export const crmDocumentVersions = pgTable(
+  "crm_document_versions",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    documentId: text("document_id").notNull().references(() => crmDocuments.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    storageKey: text("storage_key").notNull(),
+    originalName: text("original_name").notNull(),
+    normalizedName: text("normalized_name").notNull(),
+    mimeType: text("mime_type").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    sha256: text("sha256").notNull(),
+    addedBy: text("added_by").notNull().references(() => users.id, { onDelete: "restrict" }),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    uniqueIndex("idx_document_versions_unique").on(table.documentId, table.version),
+    uniqueIndex("idx_document_versions_storage").on(table.storageKey),
+    index("idx_document_versions_lookup").on(table.tenantId, table.documentId, table.version),
   ],
 );
 

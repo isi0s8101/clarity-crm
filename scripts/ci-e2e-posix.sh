@@ -138,8 +138,17 @@ code="$(curl -sS -b "$COOKIE_JAR" -o /tmp/clarity-document.json -w '%{http_code}
 document_id="$(jq -r '.item.id' /tmp/clarity-document.json)"
 code="$(curl -sS -b "$COOKIE_JAR" -o /tmp/clarity-document-download.txt -w '%{http_code}' "$BASE/api/documents/download?id=${document_id}")"
 [[ "$code" == 200 && "$(cat /tmp/clarity-document-download.txt)" == "document integration test" ]] || exit 1
+printf 'document integration version two\n' >/tmp/clarity-document-v2.txt
+code="$(curl -sS -b "$COOKIE_JAR" -o /tmp/clarity-document-v2.json -w '%{http_code}' -F "file=@/tmp/clarity-document-v2.txt;type=text/plain" "$BASE/api/documents/${document_id}/versions")"
+[[ "$code" == 201 && "$(jq -r '.item.version' /tmp/clarity-document-v2.json)" == 2 ]] || { cat /tmp/clarity-document-v2.json >&2; exit 1; }
+code="$(curl -sS -b "$COOKIE_JAR" -o /tmp/clarity-document-v1-download.txt -w '%{http_code}' "$BASE/api/documents/download?id=${document_id}&version=1")"
+[[ "$code" == 200 && "$(cat /tmp/clarity-document-v1-download.txt)" == "document integration test" ]] || exit 1
+code="$(curl -sS -b "$COOKIE_JAR" -o /tmp/clarity-document-v2-download.txt -w '%{http_code}' "$BASE/api/documents/download?id=${document_id}&version=2")"
+[[ "$code" == 200 && "$(cat /tmp/clarity-document-v2-download.txt)" == "document integration version two" ]] || exit 1
+code="$(curl -sS -b "$COOKIE_JAR" -o /tmp/clarity-document-versions.json -w '%{http_code}' "$BASE/api/documents/${document_id}/versions")"
+[[ "$code" == 200 && "$(jq '.items | length' /tmp/clarity-document-versions.json)" == 2 ]] || { cat /tmp/clarity-document-versions.json >&2; exit 1; }
 [[ -f "$(find "$DOCUMENTS_DIR" -type f -print -quit)" ]] || { echo "document not stored" >&2; exit 1; }
-echo "[OK] protected POSIX document storage/download"
+echo "[OK] protected POSIX document storage/versioning/download"
 
 [[ -n "${DATABASE_URL:-}" ]] || { echo "DATABASE_URL absent pour la recette PostgreSQL" >&2; exit 1; }
 user_id="$(psql -X --dbname="$DATABASE_URL" -Atqc "SELECT id FROM users WHERE email='${CLARITY_ADMIN_EMAIL//\'/\'\'}' LIMIT 1")"

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { and, desc, eq } from "drizzle-orm";
 
 import { getDb } from "@/db";
-import { crmDocuments } from "@/db/schema";
+import { crmDocuments, crmDocumentVersions } from "@/db/schema";
 import { audit, authErrorResponse, requireRecordPermission, resolveAuthContext } from "@/lib/authz";
 import { crmErrorResponse, getCrmRecord } from "@/lib/crm-core";
 import { discardStoredDocument, DocumentValidationError, storeDocument } from "@/lib/documents";
@@ -39,17 +39,25 @@ export async function POST(request: NextRequest) {
     const recordId = typeof form.get("recordId") === "string" ? String(form.get("recordId")) : "";
     const file = form.get("file");
     if (!(file instanceof File)) return NextResponse.json({ error: "Fichier requis." }, { status: 400 });
+    const metadata = documentMetadata(form);
+    if (!metadata) return NextResponse.json({ error: "Métadonnées documentaires invalides." }, { status: 400 });
     const record = await getCrmRecord(actor, recordId, "update");
     await requireRecordPermission(actor, "document", "create");
-    stored = await storeDocument(actor.tenantId, file);
-    const inserted = await getDb().insert(crmDocuments).values({
-      ...stored,
-      tenantId: actor.tenantId,
-      recordId: record.id,
-      uploadedBy: actor.userId,
-    }).returning();
-    await audit(actor, { action: "document.uploaded", resourceType: "document", resourceId: stored.id, result: "success", after: inserted[0] });
-    return NextResponse.json({ item: inserted[0] }, { status: 201 });
+    const storedDocument = await storeDocument(actor.tenantId, file);
+    stored = storedDocument;
+    const item = await getDb().transaction(async (tx) => {
+      const document = (await tx.insert(crmDocuments).values({
+        ...storedDocument, tenantId: actor.tenantId, recordId: record.id, uploadedBy: actor.userId, ownerId: actor.userId, ...metadata,
+      }).returning())[0];
+      await tx.insert(crmDocumentVersions).values({
+        id: crypto.randomUUID(), tenantId: actor.tenantId, documentId: document.id, version: 1,
+        storageKey: storedDocument.storageKey, originalName: storedDocument.originalName, normalizedName: storedDocument.normalizedName,
+        mimeType: storedDocument.mimeType, sizeBytes: storedDocument.sizeBytes, sha256: storedDocument.sha256, addedBy: actor.userId,
+      });
+      return document;
+    });
+    await audit(actor, { action: "document.uploaded", resourceType: "document", resourceId: storedDocument.id, result: "success", after: item });
+    return NextResponse.json({ item }, { status: 201 });
   } catch (error) {
     if (stored) await discardStoredDocument(stored.storageKey);
     const authResponse = authErrorResponse(error);
@@ -60,6 +68,15 @@ export async function POST(request: NextRequest) {
     console.error("documents:upload", error);
     return NextResponse.json({ error: "Téléversement impossible." }, { status: 503 });
   }
+}
+
+function documentMetadata(form: FormData): { category: string; tags: string; description: string } | null {
+  const category = typeof form.get("category") === "string" ? String(form.get("category")).trim().slice(0, 80) : "";
+  const description = typeof form.get("description") === "string" ? String(form.get("description")).trim().slice(0, 2000) : "";
+  const rawTags = typeof form.get("tags") === "string" ? String(form.get("tags")) : "";
+  const tags = rawTags.split(",").map((value) => value.normalize("NFKC").trim().toLowerCase()).filter((value) => /^[a-z0-9][a-z0-9_-]{0,39}$/.test(value)).slice(0, 20);
+  if (rawTags && tags.length !== rawTags.split(",").filter((value) => value.trim()).length) return null;
+  return { category, tags: JSON.stringify([...new Set(tags)]), description };
 }
 
 export async function PATCH(request: NextRequest) {
