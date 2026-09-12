@@ -78,6 +78,18 @@ code="$(curl -sS -b "$COOKIE_JAR" -o /tmp/clarity-preferences-update.json -w '%{
 [[ "$code" == 200 && "$(jq -r '.item.settings.timeZone' /tmp/clarity-preferences-update.json)" == "Europe/Paris" ]] || { cat /tmp/clarity-preferences-update.json >&2; exit 1; }
 code="$(curl -sS -b "$COOKIE_JAR" -o /dev/null -w '%{http_code}' "$BASE/api/preferences")"
 [[ "$code" == 200 ]] || exit 1
+dashboard_payload='{"name":"CI commercial","scope":"personal","widgets":[{"widgetType":"metric","configuration":{"metric":"openOpportunities"}},{"widgetType":"pipeline","configuration":{}}]}'
+code="$(curl -sS -b "$COOKIE_JAR" -o /tmp/clarity-dashboard.json -w '%{http_code}' -H 'content-type: application/json' -d "$dashboard_payload" "$BASE/api/dashboards")"
+[[ "$code" == 201 ]] || { cat /tmp/clarity-dashboard.json >&2; exit 1; }
+dashboard_id="$(jq -r '.item.id' /tmp/clarity-dashboard.json)"
+dashboard_version="$(jq -r '.item.version' /tmp/clarity-dashboard.json)"
+code="$(curl -sS -b "$COOKIE_JAR" -o /tmp/clarity-dashboards.json -w '%{http_code}' "$BASE/api/dashboards")"
+[[ "$code" == 200 && "$(jq -r --arg id "$dashboard_id" '.items[] | select(.id == $id) | .widgets | length' /tmp/clarity-dashboards.json)" == 2 ]] || { cat /tmp/clarity-dashboards.json >&2; exit 1; }
+dashboard_patch="$(jq -nc --arg id "$dashboard_id" --argjson version "$dashboard_version" '{id:$id,version:$version,name:"CI commercial mis à jour"}')"
+code="$(curl -sS -b "$COOKIE_JAR" -o /tmp/clarity-dashboard-update.json -w '%{http_code}' -X PATCH -H 'content-type: application/json' -d "$dashboard_patch" "$BASE/api/dashboards")"
+[[ "$code" == 200 && "$(jq -r '.item.version' /tmp/clarity-dashboard-update.json)" == "$((dashboard_version + 1))" ]] || { cat /tmp/clarity-dashboard-update.json >&2; exit 1; }
+code="$(curl -sS -b "$COOKIE_JAR" -o /dev/null -w '%{http_code}' -X DELETE "$BASE/api/dashboards?id=${dashboard_id}")"
+[[ "$code" == 200 ]] || exit 1
 favorite_payload="$(jq -nc --arg resourceId "$record_id" '{resourceType:"crm_record",resourceId:$resourceId}')"
 code="$(curl -sS -b "$COOKIE_JAR" -o /tmp/clarity-favorite.json -w '%{http_code}' -H 'content-type: application/json' -d "$favorite_payload" "$BASE/api/favorites")"
 [[ "$code" == 201 ]] || { cat /tmp/clarity-favorite.json >&2; exit 1; }
@@ -86,7 +98,7 @@ code="$(curl -sS -b "$COOKIE_JAR" -o /tmp/clarity-favorites.json -w '%{http_code
 [[ "$code" == 200 && "$(jq -r --arg id "$favorite_id" '.items[] | select(.id == $id) | .id' /tmp/clarity-favorites.json)" == "$favorite_id" ]] || { cat /tmp/clarity-favorites.json >&2; exit 1; }
 code="$(curl -sS -b "$COOKIE_JAR" -o /dev/null -w '%{http_code}' -X DELETE "$BASE/api/favorites?id=${favorite_id}")"
 [[ "$code" == 200 ]] || exit 1
-echo "[OK] persistent saved views, user preferences + favorites"
+echo "[OK] persistent saved views, user preferences, dashboards + favorites"
 
 patch="$(jq -nc --arg id "$record_id" '{id:$id,title:"CI Tenant Alpha Updated",data:{website:"https://updated.example.test"}}')"
 code="$(curl -sS -b "$COOKIE_JAR" -o /tmp/clarity-update.json -w '%{http_code}' -X PATCH -H 'content-type: application/json' -d "$patch" "$BASE/api/crm")"

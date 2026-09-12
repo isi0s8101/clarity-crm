@@ -63,6 +63,7 @@ type SavedView = { id: string; name: string; objectType: string; scope: "persona
 type PreferenceItem = { settings: Record<string, unknown>; version: number };
 type FavoriteItem = { id: string; resourceType: string; resourceId: string };
 type CrmFilter = { field: string; operator: string; value: string };
+type PersistedDashboard = { id: string; name: string; scope: "personal" | "team" | "tenant"; isDefault: boolean; version: number; widgets: Array<{ id: string; widgetType: string; configuration: Record<string, unknown> }> };
 
 const EXAMPLES: Record<string, Record<string, unknown>> = {
   company: { website: "https://example.com" },
@@ -127,10 +128,15 @@ export function V1Console({ user }: { user: { email: string; displayName: string
   const [preferences, setPreferences] = useState<PreferenceItem>({ settings: {}, version: 0 });
   const [preferencesForm, setPreferencesForm] = useState({ homePage: "dashboard", pageSize: 50, density: "comfortable", timeZone: "UTC", dateFormat: "fr-FR" });
   const [favorites, setFavorites] = useState<FavoriteItem[]>([]);
+  const [persistedDashboards, setPersistedDashboards] = useState<PersistedDashboard[]>([]);
+  const [activeDashboardId, setActiveDashboardId] = useState("");
+  const [dashboardName, setDashboardName] = useState("");
 
   const isAdmin = session?.role === "admin";
   const typeLabel = useMemo(() => TYPES.find(([key]) => key === type)?.[1] ?? type, [type]);
   const selectedForm = forms.find((item) => String(item.definition.key ?? "") === selectedFormKey);
+  const activePersistedDashboard = persistedDashboards.find((item) => item.id === activeDashboardId) ?? persistedDashboards.find((item) => item.isDefault) ?? null;
+  const displaysDashboardWidget = (widgetType: string, metric?: string) => !activePersistedDashboard || activePersistedDashboard.widgets.some((widget) => widget.widgetType === widgetType && (widgetType !== "metric" || widget.configuration.metric === metric));
   const selectedFormFields = Array.isArray(selectedForm?.definition.fields)
     ? selectedForm.definition.fields as Array<Record<string, unknown>>
     : [];
@@ -188,6 +194,15 @@ export function V1Console({ user }: { user: { email: string; displayName: string
 
   useEffect(() => {
     if (view === "dashboard") void Promise.resolve().then(loadDashboard);
+    if (view === "dashboard") {
+      request("/api/dashboards")
+        .then((payload) => {
+          const items = Array.isArray(payload.items) ? payload.items as PersistedDashboard[] : [];
+          setPersistedDashboards(items);
+          setActiveDashboardId((current) => current && items.some((item) => item.id === current) ? current : items.find((item) => item.isDefault)?.id ?? items[0]?.id ?? "");
+        })
+        .catch((error) => setMessage(errorMessage(error)));
+    }
     if (view === "crm") void Promise.resolve().then(loadRecords);
     if (view === "config") void Promise.resolve().then(loadConfigurations);
     if (view === "forms") {
@@ -451,6 +466,50 @@ export function V1Console({ user }: { user: { email: string; displayName: string
     }
   };
 
+  const createPersistedDashboard = async (event: FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await request("/api/dashboards", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: dashboardName,
+          scope: "personal",
+          widgets: [
+            ...["openOpportunities", "pipelineAmountCents", "wonOpportunities", "openTasks", "overdueTasks"].map((metric) => ({ widgetType: "metric", configuration: { metric } as Record<string, unknown> })),
+            { widgetType: "pipeline", configuration: {} }, { widgetType: "activity", configuration: {} },
+          ],
+        }),
+      });
+      const item = payload.item as PersistedDashboard;
+      setPersistedDashboards((current) => [item, ...current]);
+      setActiveDashboardId(item.id);
+      setDashboardName("");
+      setMessage("Dashboard personnel créé.");
+    } catch (error) {
+      setMessage(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deletePersistedDashboard = async (item: PersistedDashboard) => {
+    setBusy(true);
+    setMessage("");
+    try {
+      await request(`/api/dashboards?id=${encodeURIComponent(item.id)}`, { method: "DELETE" });
+      setPersistedDashboards((current) => current.filter((entry) => entry.id !== item.id));
+      setActiveDashboardId("");
+      setMessage("Dashboard archivé.");
+    } catch (error) {
+      setMessage(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const openNotificationResource = async (item: NotificationItem) => {
     if (!item.resourceId) return;
     setView("crm");
@@ -650,7 +709,7 @@ export function V1Console({ user }: { user: { email: string; displayName: string
         <section className="min-w-0 space-y-5">
           {message ? <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm">{message}</div> : null}
 
-          {view === "dashboard" ? <section className="space-y-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-semibold">Dashboard réel</h2><p className="text-sm text-slate-500">Indicateurs calculés uniquement à partir des données accessibles dans le tenant courant.</p></div><button onClick={() => void loadDashboard()} className="rounded-lg border px-3 py-2 text-sm">Actualiser</button></div>{dashboard ? <><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3"><Metric title="Opportunités ouvertes" value={String(dashboard.openOpportunities)} /><Metric title="Pipeline ouvert" value={formatCents(dashboard.pipelineAmountCents)} /><Metric title="Opportunités gagnées" value={String(dashboard.wonOpportunities)} /><Metric title="Tâches ouvertes" value={String(dashboard.openTasks)} /><Metric title="Tâches échues" value={String(dashboard.overdueTasks)} /><Metric title="Étapes visibles" value={String(Object.keys(dashboard.stageCounts).length)} /></div><div className="grid gap-5 xl:grid-cols-[.9fr_1.1fr]"><div className="rounded-2xl border border-slate-200 bg-white p-5"><h3 className="font-semibold">Répartition du pipeline</h3><div className="mt-4 space-y-3">{Object.keys(dashboard.stageCounts).length ? Object.entries(dashboard.stageCounts).map(([stage, count]) => <div className="flex items-center justify-between border-b border-slate-100 pb-3 text-sm" key={stage}><span>{stage}</span><strong>{count}</strong></div>) : <p className="text-sm text-slate-500">Aucune opportunité accessible.</p>}</div></div><div className="rounded-2xl border border-slate-200 bg-white p-5"><h3 className="font-semibold">Activité récente</h3><div className="mt-4 divide-y divide-slate-100">{dashboard.activity.length ? dashboard.activity.map((item) => <div key={item.id} className="py-3"><strong className="text-sm">{item.summary}</strong><p className="mt-1 text-xs text-slate-500">{item.eventType} · {new Date(item.createdAt).toLocaleString("fr-FR")}</p></div>) : <p className="text-sm text-slate-500">Aucune activité visible.</p>}</div></div></div></> : <p className="rounded-2xl border border-dashed border-slate-200 bg-white p-6 text-sm text-slate-500">Chargement des données du dashboard…</p>}</section> : null}
+          {view === "dashboard" ? <section className="space-y-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-semibold">Dashboard réel</h2><p className="text-sm text-slate-500">Widgets persistants, calculés uniquement à partir des données autorisées du tenant courant.</p></div><button onClick={() => void loadDashboard()} className="rounded-lg border px-3 py-2 text-sm">Actualiser</button></div><div className="grid gap-5 xl:grid-cols-[1fr_360px]"><section className="rounded-2xl border border-slate-200 bg-white p-5"><h3 className="font-semibold">Mes dashboards</h3><div className="mt-3 divide-y divide-slate-100">{persistedDashboards.length ? persistedDashboards.map((item) => <div key={item.id} className="flex items-center justify-between gap-3 py-3"><button type="button" onClick={() => setActiveDashboardId(item.id)} className={`text-left text-sm ${activePersistedDashboard?.id === item.id ? "font-semibold text-blue-700" : ""}`}>{item.name}<span className="ml-2 text-xs text-slate-500">{item.scope} · {item.widgets.length} widgets</span></button><button disabled={busy} type="button" onClick={() => void deletePersistedDashboard(item)} className="rounded border border-red-200 px-2 py-1 text-xs text-red-700">Archiver</button></div>) : <p className="py-3 text-sm text-slate-500">Aucun dashboard personnel. Le tableau standard reste disponible.</p>}</div></section><form onSubmit={createPersistedDashboard} className="rounded-2xl border border-slate-200 bg-white p-5"><h3 className="font-semibold">Nouveau dashboard</h3><p className="mt-1 text-xs text-slate-500">Crée un dashboard personnel avec les widgets métier réels standards.</p><input required maxLength={120} className="mt-4 w-full rounded-lg border px-3 py-2 text-sm" value={dashboardName} onChange={(event) => setDashboardName(event.target.value)} placeholder="Ex. Suivi commercial" /><button disabled={busy} className="mt-3 w-full rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">Créer</button></form></div>{dashboard ? <><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{([[["openOpportunities", "Opportunités ouvertes", String(dashboard.openOpportunities)]], [["pipelineAmountCents", "Pipeline ouvert", formatCents(dashboard.pipelineAmountCents)]], [["wonOpportunities", "Opportunités gagnées", String(dashboard.wonOpportunities)]], [["openTasks", "Tâches ouvertes", String(dashboard.openTasks)]], [["overdueTasks", "Tâches échues", String(dashboard.overdueTasks)]] ] as Array<Array<[string, string, string]>>).flat().filter(([metric]) => displaysDashboardWidget("metric", metric)).map(([metric, title, value]) => <Metric key={metric} title={title} value={value} />)}</div><div className="grid gap-5 xl:grid-cols-[.9fr_1.1fr]">{displaysDashboardWidget("pipeline") ? <div className="rounded-2xl border border-slate-200 bg-white p-5"><h3 className="font-semibold">Répartition du pipeline</h3><div className="mt-4 space-y-3">{Object.keys(dashboard.stageCounts).length ? Object.entries(dashboard.stageCounts).map(([stage, count]) => <div className="flex items-center justify-between border-b border-slate-100 pb-3 text-sm" key={stage}><span>{stage}</span><strong>{count}</strong></div>) : <p className="text-sm text-slate-500">Aucune opportunité accessible.</p>}</div></div> : null}{displaysDashboardWidget("activity") ? <div className="rounded-2xl border border-slate-200 bg-white p-5"><h3 className="font-semibold">Activité récente</h3><div className="mt-4 divide-y divide-slate-100">{dashboard.activity.length ? dashboard.activity.map((item) => <div key={item.id} className="py-3"><strong className="text-sm">{item.summary}</strong><p className="mt-1 text-xs text-slate-500">{item.eventType} · {new Date(item.createdAt).toLocaleString("fr-FR")}</p></div>) : <p className="text-sm text-slate-500">Aucune activité visible.</p>}</div></div> : null}</div></> : <p className="rounded-2xl border border-dashed border-slate-200 bg-white p-6 text-sm text-slate-500">Chargement des données du dashboard…</p>}</section> : null}
 
           {view === "views" ? <div className="grid gap-5 xl:grid-cols-[1fr_360px]"><section className="rounded-2xl border border-slate-200 bg-white p-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold">Vues enregistrées · {typeLabel}</h2><p className="mt-1 text-sm text-slate-500">Les vues sont persistantes et restent soumises aux permissions et scopes du serveur.</p></div><button onClick={() => setView("crm")} className="rounded-lg border px-3 py-2 text-sm">Retour au CRM</button></div><div className="mt-5 divide-y divide-slate-100">{savedViews.length ? savedViews.map((item) => <article key={item.id} className="flex flex-wrap items-center justify-between gap-3 py-4"><div><strong className="text-sm">{item.name}</strong><p className="mt-1 text-xs text-slate-500">{item.scope} · v{item.version}{item.isDefault ? " · vue par défaut" : ""}</p></div><div className="flex gap-2"><button type="button" onClick={() => void applySavedView(item)} className="rounded border px-2 py-1 text-xs">Appliquer</button><button disabled={busy} type="button" onClick={() => void deleteSavedView(item)} className="rounded border border-red-200 px-2 py-1 text-xs text-red-700">Archiver</button></div></article>) : <p className="py-8 text-sm text-slate-500">Aucune vue disponible pour cet objet.</p>}</div></section><form onSubmit={createSavedView} className="rounded-2xl border border-slate-200 bg-white p-5"><h2 className="font-semibold">Enregistrer la vue courante</h2><p className="mt-1 text-sm text-slate-500">Recherche et colonnes actives sont enregistrées côté serveur.</p><label className="mt-4 block text-sm">Nom<input required maxLength={120} className="mt-1 w-full rounded-lg border px-3 py-2" value={savedViewForm.name} onChange={(event) => setSavedViewForm({ ...savedViewForm, name: event.target.value })} /></label><label className="mt-3 block text-sm">Partage<select className="mt-1 w-full rounded-lg border px-3 py-2" value={savedViewForm.scope} onChange={(event) => setSavedViewForm({ ...savedViewForm, scope: event.target.value as SavedView["scope"] })}><option value="personal">Privée</option><option value="team">Équipe</option>{isAdmin ? <option value="tenant">Tenant</option> : null}</select></label><label className="mt-3 flex items-center gap-2 text-sm"><input type="checkbox" checked={savedViewForm.isDefault} onChange={(event) => setSavedViewForm({ ...savedViewForm, isDefault: event.target.checked })} />Définir par défaut</label><button disabled={busy} className="mt-5 w-full rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Enregistrer</button></form></div> : null}
 
