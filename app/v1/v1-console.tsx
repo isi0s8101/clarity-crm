@@ -621,7 +621,7 @@ export function V1Console({ user }: { user: { email: string; displayName: string
     <main className="min-h-screen bg-slate-50 text-slate-950">
       <header className="border-b border-slate-200 bg-white px-5 py-4 lg:px-8">
         <div className="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-3">
-          <div><p className="text-xs font-semibold uppercase tracking-[.16em] text-blue-600">Clarity CRM v1.0</p><h1 className="text-xl font-semibold">Espace métier réel</h1></div>
+          <div><p className="text-xs font-semibold uppercase tracking-[.16em] text-blue-600">Clarity CRM v2 · fondations V1</p><h1 className="text-xl font-semibold">Espace métier réel</h1></div>
           <div className="text-right text-sm"><strong>{user.displayName}</strong><p className="text-slate-500">{session ? `${session.role} · ${session.tenantId}` : user.email}</p></div>
         </div>
       </header>
