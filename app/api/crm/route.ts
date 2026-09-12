@@ -9,6 +9,8 @@ import {
   updateCrmRecord,
 } from "@/lib/crm-core";
 import { authErrorResponse, resolveAuthContext } from "@/lib/authz";
+import { CrmFilterValidationError, parseCrmFilters } from "@/lib/crm-filter-policy.js";
+import type { CrmFilterGroup } from "@/lib/crm-filter-types";
 import { assertSameOriginMutation } from "@/lib/native-auth";
 
 export async function GET(request: NextRequest) {
@@ -23,9 +25,18 @@ export async function GET(request: NextRequest) {
     const type = request.nextUrl.searchParams.get("type") ?? "";
     const status = request.nextUrl.searchParams.get("status");
     const q = request.nextUrl.searchParams.get("q");
+    const filtersParam = request.nextUrl.searchParams.get("filters");
+    let filters: CrmFilterGroup | undefined;
+    if (filtersParam) {
+      try {
+        filters = parseCrmFilters(JSON.parse(filtersParam) as unknown) as CrmFilterGroup;
+      } catch (error) {
+        throw error instanceof CrmFilterValidationError ? error : new CrmFilterValidationError("Filtres CRM invalides.");
+      }
+    }
     const limit = toInteger(request.nextUrl.searchParams.get("limit"), 50);
     const offset = toInteger(request.nextUrl.searchParams.get("offset"), 0);
-    const items = await listCrmRecords(actor, { type, status, q, limit, offset });
+    const items = await listCrmRecords(actor, { type, status, q, filters, limit, offset });
     return NextResponse.json({ items, limit, offset });
   } catch (error) {
     const authResponse = authErrorResponse(error);

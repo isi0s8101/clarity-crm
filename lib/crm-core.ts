@@ -22,6 +22,9 @@ import {
   CrmConfigurationValidationError,
   validateConfiguredRecordData,
 } from "@/lib/crm-runtime-validation";
+import { buildCrmFilterCondition } from "@/lib/crm-filters";
+import { CrmFilterValidationError } from "@/lib/crm-filter-policy.js";
+import type { CrmFilterGroup } from "@/lib/crm-filter-types";
 import { dispatchOutboundWebhooks, type WebhookEvent } from "@/lib/webhooks";
 
 export type CrmRecord = {
@@ -47,7 +50,7 @@ export class CrmNotFoundError extends Error {
 
 export async function listCrmRecords(
   actor: AuthContext,
-  input: { type: string; status?: string | null; q?: string | null; limit?: number; offset?: number; action?: "read" | "export" },
+  input: { type: string; status?: string | null; q?: string | null; filters?: CrmFilterGroup; limit?: number; offset?: number; action?: "read" | "export" },
 ) {
   const type = normalizeRecordType(input.type);
   if (!type) throw new CrmValidationError("Type CRM invalide.");
@@ -61,6 +64,11 @@ export async function listCrmRecords(
   if (scope === "team") filters.push(eq(crmRecords.teamId, actor.teamId));
   if (scope === "personal") filters.push(eq(crmRecords.ownerId, actor.userId));
   if (input.q?.trim()) filters.push(like(crmRecords.title, `%${input.q.trim().slice(0, 80)}%`));
+  if (input.filters) {
+    const filterCondition = buildCrmFilterCondition(input.filters);
+    if (!filterCondition) throw new CrmFilterValidationError("Filtres CRM invalides.");
+    filters.push(filterCondition);
+  }
 
   const limit = Math.min(100, Math.max(1, input.limit ?? 50));
   const offset = Math.min(10000, Math.max(0, input.offset ?? 0));
@@ -238,6 +246,7 @@ export function crmErrorResponse(error: unknown) {
   if (
     error instanceof CrmValidationError ||
     error instanceof CrmNotFoundError ||
+    error instanceof CrmFilterValidationError ||
     error instanceof CrmConfigurationValidationError
   ) {
     return Response.json({ error: error.message }, { status: error.status });

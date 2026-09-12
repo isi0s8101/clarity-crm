@@ -62,6 +62,7 @@ type NotificationItem = { id: string; type: string; message: string; resourceTyp
 type SavedView = { id: string; name: string; objectType: string; scope: "personal" | "team" | "tenant"; definition: Record<string, unknown>; isDefault: boolean; version: number; updatedAt: string };
 type PreferenceItem = { settings: Record<string, unknown>; version: number };
 type FavoriteItem = { id: string; resourceType: string; resourceId: string };
+type CrmFilter = { field: string; operator: string; value: string };
 
 const EXAMPLES: Record<string, Record<string, unknown>> = {
   company: { website: "https://example.com" },
@@ -119,6 +120,8 @@ export function V1Console({ user }: { user: { email: string; displayName: string
   const [importPreview, setImportPreview] = useState<Record<string, unknown> | null>(null);
   const [globalQuery, setGlobalQuery] = useState("");
   const [globalResults, setGlobalResults] = useState<RecordItem[]>([]);
+  const [crmFilters, setCrmFilters] = useState<CrmFilter[]>([]);
+  const [filterLogic, setFilterLogic] = useState<"and" | "or">("and");
   const [savedViews, setSavedViews] = useState<SavedView[]>([]);
   const [savedViewForm, setSavedViewForm] = useState({ name: "", scope: "personal" as SavedView["scope"], isDefault: false });
   const [preferences, setPreferences] = useState<PreferenceItem>({ settings: {}, version: 0 });
@@ -143,13 +146,14 @@ export function V1Console({ user }: { user: { email: string; displayName: string
     try {
       const params = new URLSearchParams({ type });
       if (query.trim()) params.set("q", query.trim());
+      if (crmFilters.length) params.set("filters", JSON.stringify({ logic: filterLogic, rules: crmFilters }));
       const payload = await request(`/api/crm?${params.toString()}`);
       setRecords(Array.isArray(payload.items) ? payload.items as RecordItem[] : []);
     } catch (error) {
       setRecords([]);
       setMessage(errorMessage(error));
     }
-  }, [query, request, type]);
+  }, [crmFilters, filterLogic, query, request, type]);
 
   const loadConfigurations = useCallback(async () => {
     try {
@@ -388,7 +392,7 @@ export function V1Console({ user }: { user: { email: string; displayName: string
         body: JSON.stringify({
           ...savedViewForm,
           objectType: type,
-          definition: { search: query.trim(), filters: [], sort: { field: "updatedAt", direction: "desc" }, columns: ["title", "status", "updatedAt"], pageSize: preferencesForm.pageSize },
+          definition: { search: query.trim(), filters: crmFilters, filterLogic, sort: { field: "updatedAt", direction: "desc" }, columns: ["title", "status", "updatedAt"], pageSize: preferencesForm.pageSize },
         }),
       });
       setSavedViews((current) => [payload.item as SavedView, ...current]);
@@ -403,8 +407,13 @@ export function V1Console({ user }: { user: { email: string; displayName: string
 
   const applySavedView = async (item: SavedView) => {
     const search = typeof item.definition.search === "string" ? item.definition.search : "";
+    const filters = Array.isArray(item.definition.filters)
+      ? item.definition.filters.filter((entry): entry is CrmFilter => Boolean(entry) && typeof entry === "object" && typeof (entry as CrmFilter).field === "string" && typeof (entry as CrmFilter).operator === "string" && typeof (entry as CrmFilter).value === "string").slice(0, 20)
+      : [];
     setType(item.objectType);
     setQuery(search);
+    setCrmFilters(filters);
+    setFilterLogic(item.definition.filterLogic === "or" ? "or" : "and");
     setView("crm");
   };
 
@@ -660,6 +669,7 @@ export function V1Console({ user }: { user: { email: string; displayName: string
               <div className="grid gap-5 xl:grid-cols-[1fr_420px]">
                 <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                   <div className="mb-4 flex items-center justify-between gap-3"><div><h2 className="font-semibold">{typeLabel}</h2><p className="text-sm text-slate-500">{records.length} enregistrement(s) visible(s) selon votre scope.</p></div><input className="rounded-lg border border-slate-200 px-3 py-2 text-sm" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void loadRecords(); }} placeholder="Rechercher" /></div>
+                  <div className="mb-4 rounded-xl border border-slate-100 bg-slate-50 p-3"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs font-medium">Filtres serveur</p><div className="flex gap-2"><select className="rounded border px-2 py-1 text-xs" value={filterLogic} onChange={(event) => setFilterLogic(event.target.value as "and" | "or")}><option value="and">ET</option><option value="or">OU</option></select><button type="button" onClick={() => setCrmFilters((current) => current.length >= 20 ? current : [...current, { field: "title", operator: "contains", value: "" }])} className="rounded border px-2 py-1 text-xs">Ajouter un critère</button><button type="button" onClick={() => { setCrmFilters([]); void loadRecords(); }} className="rounded border px-2 py-1 text-xs">Effacer</button></div></div>{crmFilters.length ? <div className="mt-3 space-y-2">{crmFilters.map((filter, index) => <div key={`${filter.field}-${index}`} className="grid gap-2 sm:grid-cols-[150px_150px_1fr_auto]"><select className="rounded border px-2 py-1 text-xs" value={filter.field} onChange={(event) => setCrmFilters((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, field: event.target.value, operator: defaultFilterOperator(event.target.value) } : item))}><option value="title">Titre</option><option value="status">Statut</option><option value="data.amountCents">Montant (centimes)</option><option value="data.probability">Probabilité</option><option value="createdAt">Créé le</option><option value="updatedAt">Modifié le</option></select><select className="rounded border px-2 py-1 text-xs" value={filter.operator} onChange={(event) => setCrmFilters((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, operator: event.target.value } : item))}>{filterOperators(filter.field).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><input className="rounded border px-2 py-1 text-xs" value={filter.value} onChange={(event) => setCrmFilters((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, value: event.target.value } : item))} placeholder="Valeur" /><button type="button" onClick={() => setCrmFilters((current) => current.filter((_, itemIndex) => itemIndex !== index))} className="rounded border border-red-200 px-2 py-1 text-xs text-red-700">Retirer</button></div>)}<button type="button" onClick={() => void loadRecords()} className="rounded border px-3 py-1 text-xs">Appliquer les filtres</button></div> : <p className="mt-2 text-xs text-slate-500">Les critères sont évalués en PostgreSQL après RBAC et scope.</p>}</div>
                   <div className="divide-y divide-slate-100">{records.length === 0 ? <p className="py-8 text-center text-sm text-slate-500">Aucune donnée.</p> : records.map((item) => <button key={item.id} onClick={() => void openRecord(item)} className="flex w-full items-center justify-between gap-3 py-3 text-left hover:bg-slate-50"><div className="min-w-0"><strong className="block truncate text-sm">{item.title}</strong><span className="text-xs text-slate-500">{item.status} · {new Date(item.updatedAt).toLocaleString("fr-FR")}</span></div><code className="max-w-40 truncate text-[11px] text-slate-400">{item.id}</code></button>)}</div>
                 </div>
                 <form onSubmit={createRecord} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -732,6 +742,14 @@ function WorkflowStep({ title, value }: { title: string; value: string }) {
 function Metric({ title, value }: { title: string; value: string }) {
   return <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-sm text-slate-500">{title}</p><strong className="mt-2 block text-2xl tracking-tight">{value}</strong></div>;
 }
+
+function filterOperators(field: string): Array<[string, string]> {
+  if (field === "createdAt" || field === "updatedAt") return [["before", "avant"], ["after", "après"], ["gte", "à partir de"], ["lte", "jusqu’à"], ["eq", "égal"]];
+  if (field.startsWith("data.")) return [["eq", "égal"], ["ne", "différent"], ["gte", "≥"], ["lte", "≤"], ["gt", ">"], ["lt", "<"], ["contains", "contient"]];
+  return [["contains", "contient"], ["eq", "égal"], ["ne", "différent"]];
+}
+
+function defaultFilterOperator(field: string) { return filterOperators(field)[0][0]; }
 
 function formatCents(value: number) {
   return new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" }).format(value / 100);

@@ -48,6 +48,9 @@ echo "[OK] CRM create $record_id"
 
 code="$(curl -sS -b "$COOKIE_JAR" -o /dev/null -w '%{http_code}' "$BASE/api/crm?id=${record_id}")"
 [[ "$code" == 200 ]] || exit 1
+filters="$(jq -nc '{logic:"and",rules:[{field:"title",operator:"contains",value:"Tenant Alpha"},{field:"data.website",operator:"contains",value:"example.test"}]}')"
+code="$(curl -sS -G -b "$COOKIE_JAR" -o /tmp/clarity-filtered.json -w '%{http_code}' --data-urlencode 'type=company' --data-urlencode "filters=$filters" "$BASE/api/crm")"
+[[ "$code" == 200 && "$(jq -r --arg id "$record_id" '.items[] | select(.id == $id) | .id' /tmp/clarity-filtered.json)" == "$record_id" ]] || { cat /tmp/clarity-filtered.json >&2; exit 1; }
 code="$(curl -sS -b "$COOKIE_JAR" -o /dev/null -w '%{http_code}' "$BASE/api/crm/search?q=Tenant&limit=20")"
 [[ "$code" == 200 ]] || exit 1
 code="$(curl -sS -b "$COOKIE_JAR" -o /dev/null -w '%{http_code}' "$BASE/api/crm/export?type=company")"
@@ -55,7 +58,7 @@ code="$(curl -sS -b "$COOKIE_JAR" -o /dev/null -w '%{http_code}' "$BASE/api/crm/
 code="$(curl -sS -b "$COOKIE_JAR" -o /tmp/clarity-export.xlsx -w '%{http_code}' "$BASE/api/crm/export?type=company&format=xlsx")"
 [[ "$code" == 200 ]] || exit 1
 [[ "$(head -c 2 /tmp/clarity-export.xlsx)" == "PK" ]] || { echo "invalid xlsx" >&2; exit 1; }
-echo "[OK] CRM get/search/export CSV+XLSX"
+echo "[OK] CRM get/filter/search/export CSV+XLSX"
 
 view_payload='{"name":"CI sociétés actives","objectType":"company","scope":"personal","isDefault":true,"definition":{"search":"CI Tenant","filters":[],"sort":{"field":"updatedAt","direction":"desc"},"columns":["title","status"],"pageSize":25}}'
 code="$(curl -sS -b "$COOKIE_JAR" -o /tmp/clarity-view.json -w '%{http_code}' -H 'content-type: application/json' -d "$view_payload" "$BASE/api/views")"
