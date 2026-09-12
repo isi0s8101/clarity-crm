@@ -280,6 +280,97 @@ export const crmImportJobs = pgTable(
   (table) => [index("idx_crm_import_jobs_tenant_created").on(table.tenantId, table.createdAt)],
 );
 
+export const savedViews = pgTable(
+  "saved_views",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    ownerId: text("owner_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    teamId: text("team_id").references(() => teams.id, { onDelete: "set null" }),
+    scope: text("scope").notNull().default("personal"),
+    objectType: text("object_type").notNull(),
+    name: text("name").notNull(),
+    definition: text("definition").notNull().default("{}"),
+    isDefault: integer("is_default").notNull().default(0),
+    version: integer("version").notNull().default(1),
+    status: text("status").notNull().default("active"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    index("idx_saved_views_access").on(table.tenantId, table.objectType, table.scope, table.status, table.updatedAt),
+    index("idx_saved_views_owner").on(table.tenantId, table.ownerId, table.status, table.updatedAt),
+  ],
+);
+
+export const userPreferences = pgTable(
+  "user_preferences",
+  {
+    tenantId: text("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    settings: text("settings").notNull().default("{}"),
+    version: integer("version").notNull().default(1),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [uniqueIndex("idx_user_preferences_tenant_user").on(table.tenantId, table.userId)],
+);
+
+export const favorites = pgTable(
+  "favorites",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    resourceType: text("resource_type").notNull(),
+    resourceId: text("resource_id").notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    uniqueIndex("idx_favorites_unique").on(table.tenantId, table.userId, table.resourceType, table.resourceId),
+    index("idx_favorites_user").on(table.tenantId, table.userId, table.createdAt),
+  ],
+);
+
+export const dashboards = pgTable(
+  "dashboards",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    ownerId: text("owner_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    teamId: text("team_id").references(() => teams.id, { onDelete: "set null" }),
+    scope: text("scope").notNull().default("personal"),
+    name: text("name").notNull(),
+    isDefault: integer("is_default").notNull().default(0),
+    version: integer("version").notNull().default(1),
+    status: text("status").notNull().default("active"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    index("idx_dashboards_access").on(table.tenantId, table.scope, table.status, table.updatedAt),
+    index("idx_dashboards_owner").on(table.tenantId, table.ownerId, table.status, table.updatedAt),
+  ],
+);
+
+export const dashboardWidgets = pgTable(
+  "dashboard_widgets",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    dashboardId: text("dashboard_id").notNull().references(() => dashboards.id, { onDelete: "cascade" }),
+    widgetType: text("widget_type").notNull(),
+    position: integer("position").notNull().default(0),
+    configuration: text("configuration").notNull().default("{}"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    uniqueIndex("idx_dashboard_widgets_position").on(table.dashboardId, table.position),
+    index("idx_dashboard_widgets_dashboard").on(table.tenantId, table.dashboardId, table.position),
+  ],
+);
+
 export const webhookDeliveries = pgTable(
   "webhook_deliveries",
   {

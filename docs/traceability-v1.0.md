@@ -1,6 +1,6 @@
-# Matrice de traçabilité — `clarity-crm_v1.0-closed`
+# Matrice de traçabilité — `clarity-crm_v1.0-closed` et `clarity-crm_v2`
 
-Cette matrice est la référence unique de fermeture. Elle décrit le HEAD courant, pas une intention historique. `clarity-crm_v1.0-closed` reste un objectif de fermeture : il ne doit pas être annoncé comme livré tant que toutes les lignes critiques ne sont pas `VALIDÉ`.
+Cette matrice est la référence unique de fermeture. Elle décrit le HEAD courant, pas une intention historique. Les lignes V1 restent la preuve de non-régression ; les lignes V2 ne sont `VALIDÉ` qu'après les recettes PostgreSQL/POSIX du SHA qui les contient.
 
 Statuts autorisés : `VALIDÉ`, `IMPLÉMENTÉ_NON_TESTÉ`, `BACKEND_SEUL`, `UI_SEULE`, `SIMULÉ`, `PARTIEL`, `À_FAIRE`, `HORS_PÉRIMÈTRE`.
 
@@ -38,8 +38,21 @@ Statuts autorisés : `VALIDÉ`, `IMPLÉMENTÉ_NON_TESTÉ`, `BACKEND_SEUL`, `UI_S
 | BUILD-02 | qualité | Build POSIX Next | n/a | `npm run build` | n/a | n/a | n/a | n/a | CI Node 22/PostgreSQL à exécuter ; conteneur local sans `uv_resident_set_memory` | IMPLÉMENTÉ_NON_TESTÉ |
 | BUILD-03 | qualité | Build Edge | n/a | `npm run build:edge` | n/a | n/a | n/a | n/a | passé sur HEAD `4b343ab` | VALIDÉ |
 
+## Extension V2 — état de la branche `feat/clarity-crm-v2`
+
+| ID | Version / phase | Fonctionnalité | Stockage | API / backend | UI | RBAC | Tenant-aware | Audit | Tests / recette | Statut |
+|---|---|---|---|---|---|---|---|---|---|---|
+| V21A-01 | v2.1-A | Vues enregistrées privées/équipe/tenant, versionnées et archivables | `saved_views` | `/api/views`, verrouillage optimiste | console : liste, application, création, archivage | oui | oui | create/update/archive | unitaires migration ; recette POSIX ajoutée, CI Node 22/PostgreSQL requise | IMPLÉMENTÉ_NON_TESTÉ |
+| V21A-02 | v2.1-A | Préférences utilisateur par tenant, versionnées | `user_preferences` | `/api/preferences`, allowlist stricte | console : page d’accueil, pagination, densité, TZ et date | oui | oui | update | unitaires migration ; recette POSIX ajoutée, CI Node 22/PostgreSQL requise | IMPLÉMENTÉ_NON_TESTÉ |
+| V21A-03 | v2.1-A | Filtres multicritères génériques contrôlés serveur | n/a | moteur CRM existant à étendre | non | n/a | n/a | n/a | absent | À_FAIRE |
+| V21B-01 | v2.1-B | Dashboards personnalisés et widgets persistants | tables préparées, sans usage métier | absent | non | n/a | n/a | n/a | absent | À_FAIRE |
+| V21B-02 | v2.1-B | Favoris persistants des fiches CRM accessibles | `favorites` | `/api/favorites`, validation de la fiche via moteur CRM existant | fiche active : ajout/retrait | oui | oui | create/delete | recette POSIX ajoutée, CI Node 22/PostgreSQL requise | IMPLÉMENTÉ_NON_TESTÉ |
+| V21B-03 | v2.1-B | Palette et raccourcis enrichis | n/a | palette existante à étendre | non | n/a | n/a | n/a | absent | À_FAIRE |
+| V22-01 | v2.2 | Versionning documentaire, OCR local, carte de visite, templates/PDF et rappels | absent | moteur documentaire existant à étendre | non | n/a | n/a | n/a | absent | À_FAIRE |
+| V23-01 | v2.3 | Gouvernance, recommandations, sandbox, diff/impact, publication et rollback | absent | configurations existantes à étendre | non | n/a | n/a | n/a | absent | À_FAIRE |
+
 ## Décision de fermeture
 
 Le statut actuel de `clarity-crm_v1.0-closed` est **NON FERMÉ**. Les fiches, relations, recherche et navigation de notification sont désormais raccordées, mais la validation Node 22/PostgreSQL du HEAD final reste obligatoire ; les lignes `PARTIEL` de configuration/automatisation/webhooks doivent conserver une preuve runtime POSIX avant fermeture.
 
-La prochaine étape produit demeure `clarity-crm_v1.1`, mais elle ne doit pas commencer avant la résolution explicite des lignes de fermeture ci-dessus ou une décision de réduction de périmètre documentée.
+La branche V2 ne peut pas être déclarée fermée tant que les lignes V2 critiques et les preuves PostgreSQL/POSIX du SHA final ne sont pas `VALIDÉ`. Les développements V3 restent hors périmètre.

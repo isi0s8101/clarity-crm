@@ -57,6 +57,34 @@ code="$(curl -sS -b "$COOKIE_JAR" -o /tmp/clarity-export.xlsx -w '%{http_code}' 
 [[ "$(head -c 2 /tmp/clarity-export.xlsx)" == "PK" ]] || { echo "invalid xlsx" >&2; exit 1; }
 echo "[OK] CRM get/search/export CSV+XLSX"
 
+view_payload='{"name":"CI sociétés actives","objectType":"company","scope":"personal","isDefault":true,"definition":{"search":"CI Tenant","filters":[],"sort":{"field":"updatedAt","direction":"desc"},"columns":["title","status"],"pageSize":25}}'
+code="$(curl -sS -b "$COOKIE_JAR" -o /tmp/clarity-view.json -w '%{http_code}' -H 'content-type: application/json' -d "$view_payload" "$BASE/api/views")"
+[[ "$code" == 201 ]] || { cat /tmp/clarity-view.json >&2; exit 1; }
+saved_view_id="$(jq -r '.item.id' /tmp/clarity-view.json)"
+saved_view_version="$(jq -r '.item.version' /tmp/clarity-view.json)"
+code="$(curl -sS -b "$COOKIE_JAR" -o /tmp/clarity-views.json -w '%{http_code}' "$BASE/api/views?objectType=company")"
+[[ "$code" == 200 && "$(jq -r --arg id "$saved_view_id" '.items[] | select(.id == $id) | .id' /tmp/clarity-views.json)" == "$saved_view_id" ]] || { cat /tmp/clarity-views.json >&2; exit 1; }
+view_patch="$(jq -nc --arg id "$saved_view_id" --argjson version "$saved_view_version" '{id:$id,version:$version,name:"CI sociétés mises à jour"}')"
+code="$(curl -sS -b "$COOKIE_JAR" -o /tmp/clarity-view-update.json -w '%{http_code}' -X PATCH -H 'content-type: application/json' -d "$view_patch" "$BASE/api/views")"
+[[ "$code" == 200 && "$(jq -r '.item.version' /tmp/clarity-view-update.json)" == "$((saved_view_version + 1))" ]] || { cat /tmp/clarity-view-update.json >&2; exit 1; }
+code="$(curl -sS -b "$COOKIE_JAR" -o /tmp/clarity-preferences.json -w '%{http_code}' "$BASE/api/preferences")"
+[[ "$code" == 200 ]] || { cat /tmp/clarity-preferences.json >&2; exit 1; }
+preferences_version="$(jq -r '.item.version' /tmp/clarity-preferences.json)"
+preferences_patch="$(jq -nc --argjson version "$preferences_version" '{version:$version,settings:{homePage:"crm",pageSize:25,density:"compact",timeZone:"Europe/Paris",dateFormat:"fr-FR"}}')"
+code="$(curl -sS -b "$COOKIE_JAR" -o /tmp/clarity-preferences-update.json -w '%{http_code}' -X PATCH -H 'content-type: application/json' -d "$preferences_patch" "$BASE/api/preferences")"
+[[ "$code" == 200 && "$(jq -r '.item.settings.timeZone' /tmp/clarity-preferences-update.json)" == "Europe/Paris" ]] || { cat /tmp/clarity-preferences-update.json >&2; exit 1; }
+code="$(curl -sS -b "$COOKIE_JAR" -o /dev/null -w '%{http_code}' "$BASE/api/preferences")"
+[[ "$code" == 200 ]] || exit 1
+favorite_payload="$(jq -nc --arg resourceId "$record_id" '{resourceType:"crm_record",resourceId:$resourceId}')"
+code="$(curl -sS -b "$COOKIE_JAR" -o /tmp/clarity-favorite.json -w '%{http_code}' -H 'content-type: application/json' -d "$favorite_payload" "$BASE/api/favorites")"
+[[ "$code" == 201 ]] || { cat /tmp/clarity-favorite.json >&2; exit 1; }
+favorite_id="$(jq -r '.item.id' /tmp/clarity-favorite.json)"
+code="$(curl -sS -b "$COOKIE_JAR" -o /tmp/clarity-favorites.json -w '%{http_code}' "$BASE/api/favorites")"
+[[ "$code" == 200 && "$(jq -r --arg id "$favorite_id" '.items[] | select(.id == $id) | .id' /tmp/clarity-favorites.json)" == "$favorite_id" ]] || { cat /tmp/clarity-favorites.json >&2; exit 1; }
+code="$(curl -sS -b "$COOKIE_JAR" -o /dev/null -w '%{http_code}' -X DELETE "$BASE/api/favorites?id=${favorite_id}")"
+[[ "$code" == 200 ]] || exit 1
+echo "[OK] persistent saved views, user preferences + favorites"
+
 patch="$(jq -nc --arg id "$record_id" '{id:$id,title:"CI Tenant Alpha Updated",data:{website:"https://updated.example.test"}}')"
 code="$(curl -sS -b "$COOKIE_JAR" -o /tmp/clarity-update.json -w '%{http_code}' -X PATCH -H 'content-type: application/json' -d "$patch" "$BASE/api/crm")"
 [[ "$code" == 200 && "$(jq -r '.item.title' /tmp/clarity-update.json)" == "CI Tenant Alpha Updated" ]] || { cat /tmp/clarity-update.json >&2; exit 1; }

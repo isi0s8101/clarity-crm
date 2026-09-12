@@ -18,7 +18,7 @@ const TYPES = [
   ["contract", "Contrats"],
 ] as const;
 
-type View = "dashboard" | "crm" | "config" | "automations" | "webhooks" | "forms" | "notifications";
+type View = "dashboard" | "crm" | "views" | "preferences" | "config" | "automations" | "webhooks" | "forms" | "notifications";
 type SessionUser = { email: string; displayName: string; role: "admin" | "user"; tenantId: string; teamId: string };
 type RecordItem = {
   id: string;
@@ -59,6 +59,9 @@ type DashboardMetrics = {
 };
 type DocumentItem = { id: string; originalName: string; normalizedName: string; mimeType: string; sizeBytes: number; createdAt: string };
 type NotificationItem = { id: string; type: string; message: string; resourceType: string; resourceId: string; readAt: string | null; createdAt: string };
+type SavedView = { id: string; name: string; objectType: string; scope: "personal" | "team" | "tenant"; definition: Record<string, unknown>; isDefault: boolean; version: number; updatedAt: string };
+type PreferenceItem = { settings: Record<string, unknown>; version: number };
+type FavoriteItem = { id: string; resourceType: string; resourceId: string };
 
 const EXAMPLES: Record<string, Record<string, unknown>> = {
   company: { website: "https://example.com" },
@@ -116,6 +119,11 @@ export function V1Console({ user }: { user: { email: string; displayName: string
   const [importPreview, setImportPreview] = useState<Record<string, unknown> | null>(null);
   const [globalQuery, setGlobalQuery] = useState("");
   const [globalResults, setGlobalResults] = useState<RecordItem[]>([]);
+  const [savedViews, setSavedViews] = useState<SavedView[]>([]);
+  const [savedViewForm, setSavedViewForm] = useState({ name: "", scope: "personal" as SavedView["scope"], isDefault: false });
+  const [preferences, setPreferences] = useState<PreferenceItem>({ settings: {}, version: 0 });
+  const [preferencesForm, setPreferencesForm] = useState({ homePage: "dashboard", pageSize: 50, density: "comfortable", timeZone: "UTC", dateFormat: "fr-FR" });
+  const [favorites, setFavorites] = useState<FavoriteItem[]>([]);
 
   const isAdmin = session?.role === "admin";
   const typeLabel = useMemo(() => TYPES.find(([key]) => key === type)?.[1] ?? type, [type]);
@@ -169,6 +177,12 @@ export function V1Console({ user }: { user: { email: string; displayName: string
   }, [request]);
 
   useEffect(() => {
+    request("/api/favorites")
+      .then((payload) => setFavorites(Array.isArray(payload.items) ? payload.items as FavoriteItem[] : []))
+      .catch(() => setFavorites([]));
+  }, [request]);
+
+  useEffect(() => {
     if (view === "dashboard") void Promise.resolve().then(loadDashboard);
     if (view === "crm") void Promise.resolve().then(loadRecords);
     if (view === "config") void Promise.resolve().then(loadConfigurations);
@@ -199,7 +213,27 @@ export function V1Console({ user }: { user: { email: string; displayName: string
         .then((payload) => { setNotifications(Array.isArray(payload.items) ? payload.items as NotificationItem[] : []); setUnreadNotifications(typeof payload.unread === "number" ? payload.unread : 0); })
         .catch((error) => setMessage(errorMessage(error)));
     }
-  }, [isAdmin, loadConfigurations, loadDashboard, loadRecords, request, selectedFormKey, view]);
+    if (view === "views") {
+      request(`/api/views?objectType=${encodeURIComponent(type)}`)
+        .then((payload) => setSavedViews(Array.isArray(payload.items) ? payload.items as SavedView[] : []))
+        .catch((error) => setMessage(errorMessage(error)));
+    }
+    if (view === "preferences") {
+      request("/api/preferences")
+        .then((payload) => {
+          const item = payload.item as PreferenceItem;
+          setPreferences(item);
+          setPreferencesForm({
+            homePage: typeof item.settings.homePage === "string" ? item.settings.homePage : "dashboard",
+            pageSize: typeof item.settings.pageSize === "number" ? item.settings.pageSize : 50,
+            density: typeof item.settings.density === "string" ? item.settings.density : "comfortable",
+            timeZone: typeof item.settings.timeZone === "string" ? item.settings.timeZone : "UTC",
+            dateFormat: typeof item.settings.dateFormat === "string" ? item.settings.dateFormat : "fr-FR",
+          });
+        })
+        .catch((error) => setMessage(errorMessage(error)));
+    }
+  }, [isAdmin, loadConfigurations, loadDashboard, loadRecords, request, selectedFormKey, type, view]);
 
   const changeType = (nextType: string) => {
     setType(nextType);
@@ -343,6 +377,71 @@ export function V1Console({ user }: { user: { email: string; displayName: string
     }
   };
 
+  const createSavedView = async (event: FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await request("/api/views", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          ...savedViewForm,
+          objectType: type,
+          definition: { search: query.trim(), filters: [], sort: { field: "updatedAt", direction: "desc" }, columns: ["title", "status", "updatedAt"], pageSize: preferencesForm.pageSize },
+        }),
+      });
+      setSavedViews((current) => [payload.item as SavedView, ...current]);
+      setSavedViewForm({ name: "", scope: "personal", isDefault: false });
+      setMessage("Vue enregistrée.");
+    } catch (error) {
+      setMessage(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const applySavedView = async (item: SavedView) => {
+    const search = typeof item.definition.search === "string" ? item.definition.search : "";
+    setType(item.objectType);
+    setQuery(search);
+    setView("crm");
+  };
+
+  const deleteSavedView = async (item: SavedView) => {
+    setBusy(true);
+    setMessage("");
+    try {
+      await request(`/api/views?id=${encodeURIComponent(item.id)}`, { method: "DELETE" });
+      setSavedViews((current) => current.filter((entry) => entry.id !== item.id));
+      setMessage("Vue archivée.");
+    } catch (error) {
+      setMessage(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const savePreferences = async (event: FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setMessage("");
+    try {
+      const payload = await request("/api/preferences", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ version: preferences.version, settings: preferencesForm }),
+      });
+      const item = payload.item as PreferenceItem;
+      setPreferences(item);
+      setMessage("Préférences enregistrées.");
+    } catch (error) {
+      setMessage(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const openNotificationResource = async (item: NotificationItem) => {
     if (!item.resourceId) return;
     setView("crm");
@@ -397,6 +496,28 @@ export function V1Console({ user }: { user: { email: string; displayName: string
       setDocuments([]);
       await loadRecords();
       setMessage("Enregistrement archivé.");
+    } catch (error) {
+      setMessage(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleFavorite = async () => {
+    if (!selected) return;
+    const current = favorites.find((item) => item.resourceType === "crm_record" && item.resourceId === selected.id);
+    setBusy(true);
+    setMessage("");
+    try {
+      if (current) {
+        await request(`/api/favorites?id=${encodeURIComponent(current.id)}`, { method: "DELETE" });
+        setFavorites((items) => items.filter((item) => item.id !== current.id));
+        setMessage("Favori retiré.");
+      } else {
+        const payload = await request("/api/favorites", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ resourceType: "crm_record", resourceId: selected.id }) });
+        setFavorites((items) => [payload.item as FavoriteItem, ...items]);
+        setMessage("Ajouté aux favoris.");
+      }
     } catch (error) {
       setMessage(errorMessage(error));
     } finally {
@@ -508,9 +629,9 @@ export function V1Console({ user }: { user: { email: string; displayName: string
       <div className="mx-auto grid max-w-[1600px] gap-5 p-5 lg:grid-cols-[220px_1fr] lg:p-8">
         <aside className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
           <nav className="space-y-1">
-            {(["dashboard", "crm", "forms", "config", "automations", "webhooks", "notifications"] as View[]).map((item) => (
+            {(["dashboard", "crm", "views", "preferences", "forms", "config", "automations", "webhooks", "notifications"] as View[]).map((item) => (
               <button key={item} className={`w-full rounded-xl px-3 py-2 text-left text-sm font-medium ${view === item ? "bg-slate-950 text-white" : "text-slate-600 hover:bg-slate-100"}`} onClick={() => setView(item)}>
-                {item === "dashboard" ? "Dashboard" : item === "crm" ? "CRM universel" : item === "forms" ? "Formulaires" : item === "config" ? "Configuration" : item === "automations" ? "Automatisations" : item === "webhooks" ? "Webhooks" : `Notifications${unreadNotifications ? ` (${unreadNotifications})` : ""}`}
+                {item === "dashboard" ? "Dashboard" : item === "crm" ? "CRM universel" : item === "views" ? "Vues enregistrées" : item === "preferences" ? "Préférences" : item === "forms" ? "Formulaires" : item === "config" ? "Configuration" : item === "automations" ? "Automatisations" : item === "webhooks" ? "Webhooks" : `Notifications${unreadNotifications ? ` (${unreadNotifications})` : ""}`}
               </button>
             ))}
           </nav>
@@ -521,6 +642,10 @@ export function V1Console({ user }: { user: { email: string; displayName: string
           {message ? <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm">{message}</div> : null}
 
           {view === "dashboard" ? <section className="space-y-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-semibold">Dashboard réel</h2><p className="text-sm text-slate-500">Indicateurs calculés uniquement à partir des données accessibles dans le tenant courant.</p></div><button onClick={() => void loadDashboard()} className="rounded-lg border px-3 py-2 text-sm">Actualiser</button></div>{dashboard ? <><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3"><Metric title="Opportunités ouvertes" value={String(dashboard.openOpportunities)} /><Metric title="Pipeline ouvert" value={formatCents(dashboard.pipelineAmountCents)} /><Metric title="Opportunités gagnées" value={String(dashboard.wonOpportunities)} /><Metric title="Tâches ouvertes" value={String(dashboard.openTasks)} /><Metric title="Tâches échues" value={String(dashboard.overdueTasks)} /><Metric title="Étapes visibles" value={String(Object.keys(dashboard.stageCounts).length)} /></div><div className="grid gap-5 xl:grid-cols-[.9fr_1.1fr]"><div className="rounded-2xl border border-slate-200 bg-white p-5"><h3 className="font-semibold">Répartition du pipeline</h3><div className="mt-4 space-y-3">{Object.keys(dashboard.stageCounts).length ? Object.entries(dashboard.stageCounts).map(([stage, count]) => <div className="flex items-center justify-between border-b border-slate-100 pb-3 text-sm" key={stage}><span>{stage}</span><strong>{count}</strong></div>) : <p className="text-sm text-slate-500">Aucune opportunité accessible.</p>}</div></div><div className="rounded-2xl border border-slate-200 bg-white p-5"><h3 className="font-semibold">Activité récente</h3><div className="mt-4 divide-y divide-slate-100">{dashboard.activity.length ? dashboard.activity.map((item) => <div key={item.id} className="py-3"><strong className="text-sm">{item.summary}</strong><p className="mt-1 text-xs text-slate-500">{item.eventType} · {new Date(item.createdAt).toLocaleString("fr-FR")}</p></div>) : <p className="text-sm text-slate-500">Aucune activité visible.</p>}</div></div></div></> : <p className="rounded-2xl border border-dashed border-slate-200 bg-white p-6 text-sm text-slate-500">Chargement des données du dashboard…</p>}</section> : null}
+
+          {view === "views" ? <div className="grid gap-5 xl:grid-cols-[1fr_360px]"><section className="rounded-2xl border border-slate-200 bg-white p-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold">Vues enregistrées · {typeLabel}</h2><p className="mt-1 text-sm text-slate-500">Les vues sont persistantes et restent soumises aux permissions et scopes du serveur.</p></div><button onClick={() => setView("crm")} className="rounded-lg border px-3 py-2 text-sm">Retour au CRM</button></div><div className="mt-5 divide-y divide-slate-100">{savedViews.length ? savedViews.map((item) => <article key={item.id} className="flex flex-wrap items-center justify-between gap-3 py-4"><div><strong className="text-sm">{item.name}</strong><p className="mt-1 text-xs text-slate-500">{item.scope} · v{item.version}{item.isDefault ? " · vue par défaut" : ""}</p></div><div className="flex gap-2"><button type="button" onClick={() => void applySavedView(item)} className="rounded border px-2 py-1 text-xs">Appliquer</button><button disabled={busy} type="button" onClick={() => void deleteSavedView(item)} className="rounded border border-red-200 px-2 py-1 text-xs text-red-700">Archiver</button></div></article>) : <p className="py-8 text-sm text-slate-500">Aucune vue disponible pour cet objet.</p>}</div></section><form onSubmit={createSavedView} className="rounded-2xl border border-slate-200 bg-white p-5"><h2 className="font-semibold">Enregistrer la vue courante</h2><p className="mt-1 text-sm text-slate-500">Recherche et colonnes actives sont enregistrées côté serveur.</p><label className="mt-4 block text-sm">Nom<input required maxLength={120} className="mt-1 w-full rounded-lg border px-3 py-2" value={savedViewForm.name} onChange={(event) => setSavedViewForm({ ...savedViewForm, name: event.target.value })} /></label><label className="mt-3 block text-sm">Partage<select className="mt-1 w-full rounded-lg border px-3 py-2" value={savedViewForm.scope} onChange={(event) => setSavedViewForm({ ...savedViewForm, scope: event.target.value as SavedView["scope"] })}><option value="personal">Privée</option><option value="team">Équipe</option>{isAdmin ? <option value="tenant">Tenant</option> : null}</select></label><label className="mt-3 flex items-center gap-2 text-sm"><input type="checkbox" checked={savedViewForm.isDefault} onChange={(event) => setSavedViewForm({ ...savedViewForm, isDefault: event.target.checked })} />Définir par défaut</label><button disabled={busy} className="mt-5 w-full rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Enregistrer</button></form></div> : null}
+
+          {view === "preferences" ? <form onSubmit={savePreferences} className="max-w-2xl rounded-2xl border border-slate-200 bg-white p-5"><h2 className="font-semibold">Préférences de l’utilisateur</h2><p className="mt-1 text-sm text-slate-500">Ces réglages sont persistés pour votre compte et le tenant courant.</p><div className="mt-5 grid gap-4 sm:grid-cols-2"><label className="text-sm">Page d’accueil<select className="mt-1 w-full rounded-lg border px-3 py-2" value={preferencesForm.homePage} onChange={(event) => setPreferencesForm({ ...preferencesForm, homePage: event.target.value })}><option value="dashboard">Dashboard</option><option value="crm">CRM</option></select></label><label className="text-sm">Taille des listes<input type="number" min="10" max="200" className="mt-1 w-full rounded-lg border px-3 py-2" value={preferencesForm.pageSize} onChange={(event) => setPreferencesForm({ ...preferencesForm, pageSize: Number(event.target.value) })} /></label><label className="text-sm">Densité<select className="mt-1 w-full rounded-lg border px-3 py-2" value={preferencesForm.density} onChange={(event) => setPreferencesForm({ ...preferencesForm, density: event.target.value })}><option value="comfortable">Confortable</option><option value="compact">Compacte</option></select></label><label className="text-sm">Fuseau horaire<input maxLength={120} className="mt-1 w-full rounded-lg border px-3 py-2" value={preferencesForm.timeZone} onChange={(event) => setPreferencesForm({ ...preferencesForm, timeZone: event.target.value })} /></label><label className="text-sm">Format de date<input maxLength={120} className="mt-1 w-full rounded-lg border px-3 py-2" value={preferencesForm.dateFormat} onChange={(event) => setPreferencesForm({ ...preferencesForm, dateFormat: event.target.value })} /></label></div><button disabled={busy} className="mt-5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Enregistrer les préférences</button></form> : null}
 
           {view === "crm" ? (
             <>
@@ -546,7 +671,7 @@ export function V1Console({ user }: { user: { email: string; displayName: string
                 </form>
               </div>
               <div className="grid gap-5 xl:grid-cols-2"><div className="rounded-2xl border border-slate-200 bg-white p-5"><h2 className="font-semibold">Import CSV contrôlé</h2><p className="mt-1 text-sm text-slate-500">Aperçu obligatoire avant écriture · UTF-8 · doublons et validations serveur.</p><input className="mt-4 block w-full text-sm" type="file" accept=".csv,text/csv" onChange={(event) => { setImportFile(event.target.files?.[0] ?? null); setImportPreview(null); }} /><div className="mt-3 flex gap-2"><button disabled={busy || !importFile} onClick={() => void previewImport(false)} className="rounded-lg border px-3 py-2 text-sm disabled:opacity-50">Prévisualiser</button><button disabled={busy || !importPreview || !importFile} onClick={() => void previewImport(true)} className="rounded-lg bg-blue-600 px-3 py-2 text-sm text-white disabled:opacity-50">Confirmer l’import</button></div>{importPreview ? <pre className="mt-4 max-h-48 overflow-auto rounded-lg bg-slate-950 p-3 text-xs text-slate-100">{pretty(importPreview)}</pre> : null}</div><div className="rounded-2xl border border-slate-200 bg-white p-5"><h2 className="font-semibold">Export contrôlé</h2><p className="mt-1 text-sm text-slate-500">Périmètre RBAC/scopes, limite de volume et protection contre les formules.</p><div className="mt-4 flex gap-2"><a className="rounded-lg border px-3 py-2 text-sm" href={`/api/crm/export?type=${encodeURIComponent(type)}`}>CSV UTF-8</a><a className="rounded-lg border px-3 py-2 text-sm" href={`/api/crm/export?type=${encodeURIComponent(type)}&format=xlsx`}>Excel (.xlsx)</a></div></div></div>
-              {selected ? <section className="grid gap-5 xl:grid-cols-[minmax(260px,.8fr)_minmax(320px,1.35fr)_minmax(240px,.7fr)]"><div className="rounded-2xl border border-slate-200 bg-white p-5"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="text-xs font-semibold uppercase tracking-[.12em] text-blue-700">{TYPES.find(([key]) => key === selected.type)?.[1] ?? selected.type}</p><h2 className="mt-1 truncate text-lg font-semibold">{selected.title}</h2><p className="mt-1 text-sm text-slate-500">{selected.status}</p></div><button disabled={busy} onClick={() => void archiveSelected()} className="rounded-lg border border-red-200 px-3 py-2 text-sm text-red-700">Archiver</button></div><dl className="mt-5 space-y-3 text-sm">{Object.entries(selected.data).slice(0, 5).map(([key, value]) => <div key={key} className="border-b border-slate-100 pb-3"><dt className="text-xs font-medium text-slate-500">{key}</dt><dd className="mt-1 break-words text-slate-900">{typeof value === "string" || typeof value === "number" || typeof value === "boolean" ? String(value) : "Valeur structurée"}</dd></div>)}</dl><details className="mt-4 rounded-xl border border-slate-200 p-3"><summary className="cursor-pointer text-sm font-medium">Afficher les données avancées</summary><pre className="mt-3 max-h-64 overflow-auto rounded-lg bg-slate-950 p-3 text-xs text-slate-100">{pretty(selected.data)}</pre></details></div><div className="rounded-2xl border border-slate-200 bg-white p-5"><h2 className="font-semibold">Activité</h2><p className="mt-1 text-sm text-slate-500">Événements rattachés à cet enregistrement.</p><div className="mt-4 divide-y divide-slate-100">{timeline.length ? timeline.map((item) => <div key={item.id} className="py-4"><strong className="text-sm">{item.summary}</strong><p className="mt-1 text-xs text-slate-500">{item.eventType} · {new Date(item.createdAt).toLocaleString("fr-FR")}</p></div>) : <p className="rounded-xl border border-dashed border-slate-200 p-4 text-sm text-slate-500">Aucune activité visible pour le moment.</p>}</div></div><aside className="rounded-2xl border border-slate-200 bg-white p-5"><h2 className="font-semibold">Documents liés</h2><p className="mt-1 text-xs text-slate-500">Stockage POSIX protégé.</p><input disabled={busy} className="mt-3 block w-full text-xs" type="file" accept=".pdf,.txt,.csv,.jpg,.jpeg,.png,.docx,.xlsx" onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadDocument(file); event.currentTarget.value = ""; }} /><div className="mt-3 space-y-2">{documents.length ? documents.map((document) => <div className="flex gap-2" key={document.id}><a className="block min-w-0 flex-1 rounded border p-2 text-xs hover:bg-slate-50" href={`/api/documents/download?id=${encodeURIComponent(document.id)}`}>{document.originalName} · {Math.ceil(document.sizeBytes / 1024)} Ko</a><button disabled={busy} onClick={() => void archiveDocument(document.id)} className="rounded border px-2 text-xs text-red-700">Archiver</button></div>) : <p className="text-xs text-slate-500">Aucun document actif.</p>}</div></aside></section> : null}
+              {selected ? <section className="grid gap-5 xl:grid-cols-[minmax(260px,.8fr)_minmax(320px,1.35fr)_minmax(240px,.7fr)]"><div className="rounded-2xl border border-slate-200 bg-white p-5"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="text-xs font-semibold uppercase tracking-[.12em] text-blue-700">{TYPES.find(([key]) => key === selected.type)?.[1] ?? selected.type}</p><h2 className="mt-1 truncate text-lg font-semibold">{selected.title}</h2><p className="mt-1 text-sm text-slate-500">{selected.status}</p></div><div className="flex flex-col gap-2"><button disabled={busy} onClick={() => void toggleFavorite()} className="rounded-lg border px-3 py-2 text-sm">{favorites.some((item) => item.resourceType === "crm_record" && item.resourceId === selected.id) ? "Retirer des favoris" : "Ajouter aux favoris"}</button><button disabled={busy} onClick={() => void archiveSelected()} className="rounded-lg border border-red-200 px-3 py-2 text-sm text-red-700">Archiver</button></div></div><dl className="mt-5 space-y-3 text-sm">{Object.entries(selected.data).slice(0, 5).map(([key, value]) => <div key={key} className="border-b border-slate-100 pb-3"><dt className="text-xs font-medium text-slate-500">{key}</dt><dd className="mt-1 break-words text-slate-900">{typeof value === "string" || typeof value === "number" || typeof value === "boolean" ? String(value) : "Valeur structurée"}</dd></div>)}</dl><details className="mt-4 rounded-xl border border-slate-200 p-3"><summary className="cursor-pointer text-sm font-medium">Afficher les données avancées</summary><pre className="mt-3 max-h-64 overflow-auto rounded-lg bg-slate-950 p-3 text-xs text-slate-100">{pretty(selected.data)}</pre></details></div><div className="rounded-2xl border border-slate-200 bg-white p-5"><h2 className="font-semibold">Activité</h2><p className="mt-1 text-sm text-slate-500">Événements rattachés à cet enregistrement.</p><div className="mt-4 divide-y divide-slate-100">{timeline.length ? timeline.map((item) => <div key={item.id} className="py-4"><strong className="text-sm">{item.summary}</strong><p className="mt-1 text-xs text-slate-500">{item.eventType} · {new Date(item.createdAt).toLocaleString("fr-FR")}</p></div>) : <p className="rounded-xl border border-dashed border-slate-200 p-4 text-sm text-slate-500">Aucune activité visible pour le moment.</p>}</div></div><aside className="rounded-2xl border border-slate-200 bg-white p-5"><h2 className="font-semibold">Documents liés</h2><p className="mt-1 text-xs text-slate-500">Stockage POSIX protégé.</p><input disabled={busy} className="mt-3 block w-full text-xs" type="file" accept=".pdf,.txt,.csv,.jpg,.jpeg,.png,.docx,.xlsx" onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadDocument(file); event.currentTarget.value = ""; }} /><div className="mt-3 space-y-2">{documents.length ? documents.map((document) => <div className="flex gap-2" key={document.id}><a className="block min-w-0 flex-1 rounded border p-2 text-xs hover:bg-slate-50" href={`/api/documents/download?id=${encodeURIComponent(document.id)}`}>{document.originalName} · {Math.ceil(document.sizeBytes / 1024)} Ko</a><button disabled={busy} onClick={() => void archiveDocument(document.id)} className="rounded border px-2 text-xs text-red-700">Archiver</button></div>) : <p className="text-xs text-slate-500">Aucun document actif.</p>}</div></aside></section> : null}
               {selected ? <section className="grid gap-5 xl:grid-cols-2">
                 <form onSubmit={updateSelected} className="rounded-2xl border border-slate-200 bg-white p-5">
                   <h2 className="font-semibold">Modifier cette fiche</h2><p className="mt-1 text-sm text-slate-500">La modification utilise le PATCH CRM, avec validation, scope et audit côté serveur.</p>
