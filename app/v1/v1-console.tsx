@@ -2,6 +2,8 @@
 
 import React, { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
+import { HelpButton } from "@/components/help/help-button";
+
 const TYPES = [
   ["company", "Sociétés"],
   ["contact", "Contacts"],
@@ -116,6 +118,7 @@ export function V1Console({ user }: { user: { email: string; displayName: string
   const [importPreview, setImportPreview] = useState<Record<string, unknown> | null>(null);
   const [globalQuery, setGlobalQuery] = useState("");
   const [globalResults, setGlobalResults] = useState<RecordItem[]>([]);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   const isAdmin = session?.role === "admin";
   const typeLabel = useMemo(() => TYPES.find(([key]) => key === type)?.[1] ?? type, [type]);
@@ -501,7 +504,10 @@ export function V1Console({ user }: { user: { email: string; displayName: string
       <header className="border-b border-slate-200 bg-white px-5 py-4 lg:px-8">
         <div className="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-3">
           <div><p className="text-xs font-semibold uppercase tracking-[.16em] text-blue-600">Clarity CRM v1.0</p><h1 className="text-xl font-semibold">Espace métier réel</h1></div>
-          <div className="text-right text-sm"><strong>{user.displayName}</strong><p className="text-slate-500">{session ? `${session.role} · ${session.tenantId}` : user.email}</p></div>
+          <div className="flex items-center gap-3">
+            <HelpButton open={helpOpen} onOpenChange={setHelpOpen} view={view} recordType={view === "crm" ? type : undefined} action={selected ? "edit" : undefined} />
+            <div className="text-right text-sm"><strong>{user.displayName}</strong><p className="text-slate-500">{session ? `${session.role} · ${session.tenantId}` : user.email}</p></div>
+          </div>
         </div>
       </header>
 

@@ -1,0 +1,1 @@
+export const glossary: Array<{ term: string; definition: string }>;
