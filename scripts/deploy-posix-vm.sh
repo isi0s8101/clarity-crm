@@ -33,6 +33,9 @@ validate_inputs() {
   [[ "$DB_NAME" =~ ^[a-z_][a-z0-9_]{0,62}$ ]] || die "Nom PostgreSQL invalide."
   [[ "$BRANCH" =~ ^[A-Za-z0-9._/-]+$ ]] || die "Branche Git invalide."
   [[ "$APP_DIR" == /* && "$APP_HOME" == /* && "$BACKUP_ROOT" == /* ]] || die "Chemins absolus requis."
+  case "$APP_DIR" in
+    /|/opt|/var|/home|/usr|/etc) die "Répertoire applicatif trop large ou dangereux." ;;
+  esac
 }
 
 require_platform() {
@@ -142,8 +145,13 @@ clone_or_validate_repo() {
     chown -R "$APP_USER:$APP_GROUP" "$APP_DIR"
     return
   fi
-  [[ -d "$APP_DIR/.git" ]] || die "$APP_DIR n'est pas un dépôt Git."
-  [[ "$(run_app git -C "$APP_DIR" remote get-url origin)" == "$REPO_URL" ]] || die "Remote Git inattendu."
+  [[ -d "$APP_DIR/.git" && ! -L "$APP_DIR/.git" ]] || die "$APP_DIR n'est pas un dépôt Git valide."
+  local current_remote
+  current_remote="$(git config --file "$APP_DIR/.git/config" --get remote.origin.url 2>/dev/null || true)"
+  [[ "$current_remote" == "$REPO_URL" ]] || die "Remote Git inattendu."
+  # Une installation existante peut avoir été préparée par un administrateur.
+  # Après validation du remote, le service doit reprendre la propriété du seul répertoire applicatif.
+  chown -R "$APP_USER:$APP_GROUP" "$APP_DIR"
 }
 
 require_clean_tree() {

@@ -57,6 +57,24 @@ code="$(curl -sS -b "$COOKIE_JAR" -o /tmp/clarity-export.xlsx -w '%{http_code}' 
 [[ "$(head -c 2 /tmp/clarity-export.xlsx)" == "PK" ]] || { echo "invalid xlsx" >&2; exit 1; }
 echo "[OK] CRM get/search/export CSV+XLSX"
 
+patch="$(jq -nc --arg id "$record_id" '{id:$id,title:"CI Tenant Alpha Updated",data:{website:"https://updated.example.test"}}')"
+code="$(curl -sS -b "$COOKIE_JAR" -o /tmp/clarity-update.json -w '%{http_code}' -X PATCH -H 'content-type: application/json' -d "$patch" "$BASE/api/crm")"
+[[ "$code" == 200 && "$(jq -r '.item.title' /tmp/clarity-update.json)" == "CI Tenant Alpha Updated" ]] || { cat /tmp/clarity-update.json >&2; exit 1; }
+
+contact_payload="$(jq -nc --arg companyId "$record_id" '{type:"contact",title:"CI Related Contact",status:"active",data:{email:"relation@example.test",companyId:$companyId}}')"
+code="$(curl -sS -b "$COOKIE_JAR" -o /tmp/clarity-contact.json -w '%{http_code}' -H 'content-type: application/json' -d "$contact_payload" "$BASE/api/crm")"
+[[ "$code" == 201 ]] || { cat /tmp/clarity-contact.json >&2; exit 1; }
+contact_id="$(jq -r '.item.id' /tmp/clarity-contact.json)"
+relation_payload="$(jq -nc --arg fromId "$record_id" --arg toId "$contact_id" '{fromId:$fromId,toId:$toId,relationType:"related_to"}')"
+code="$(curl -sS -b "$COOKIE_JAR" -o /tmp/clarity-relation.json -w '%{http_code}' -H 'content-type: application/json' -d "$relation_payload" "$BASE/api/crm/relations")"
+[[ "$code" == 201 ]] || { cat /tmp/clarity-relation.json >&2; exit 1; }
+relation_id="$(jq -r '.item.id' /tmp/clarity-relation.json)"
+code="$(curl -sS -b "$COOKIE_JAR" -o /tmp/clarity-relations.json -w '%{http_code}' "$BASE/api/crm/relations?recordId=${record_id}")"
+[[ "$code" == 200 && "$(jq -r --arg id "$contact_id" '.items[] | select(.related.id == $id) | .related.id' /tmp/clarity-relations.json)" == "$contact_id" ]] || { cat /tmp/clarity-relations.json >&2; exit 1; }
+code="$(curl -sS -b "$COOKIE_JAR" -o /dev/null -w '%{http_code}' -X DELETE "$BASE/api/crm/relations?id=${relation_id}")"
+[[ "$code" == 200 ]] || exit 1
+echo "[OK] CRM update + relations CRUD"
+
 automation_payload='{"kind":"automation","name":"CI notification owner","definition":{"key":"ci_notify_owner","trigger":{"event":"record.created","type":"company"},"conditions":[],"actions":[{"kind":"notify_owner","message":"Création {{title}}"}]}}'
 code="$(curl -sS -b "$COOKIE_JAR" -o /tmp/clarity-automation.json -w '%{http_code}' -H 'content-type: application/json' -d "$automation_payload" "$BASE/api/configurations")"
 [[ "$code" == 201 ]] || { cat /tmp/clarity-automation.json >&2; exit 1; }
