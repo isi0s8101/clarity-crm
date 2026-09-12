@@ -1,8 +1,8 @@
-# Clarity CRM - construction de clarity-crm_v1.0
+# Clarity CRM — cible de fermeture `clarity-crm_v1.0-closed`
 
 CRM professionnel modulaire conçu pour piloter les ventes, configurer les objets métier, automatiser les tâches et gouverner les accès sans complexité excessive.
 
-`clarity-crm_v1.0` est construit de manière incrémentale à partir de l'historique existant. Les versions historiques `clarity-crm_v0.1`, `clarity-crm_v0.2` et `clarity-crm_v0.3` restent conservées, mais le runtime POSIX cible de la v1.0 est maintenant PostgreSQL.
+`clarity-crm_v1.0-closed` est la cible de consolidation des versions historiques `clarity-crm_v0.1`, `clarity-crm_v0.2` et `clarity-crm_v0.3`. Le runtime POSIX de référence est PostgreSQL. Cette fermeture n'est pas encore déclarée : la [matrice de traçabilité](docs/traceability-v1.0.md) indique précisément les fonctions livrées, partielles ou à faire.
 
 ## Runtime cible
 
@@ -18,7 +18,7 @@ Le runtime de référence est une application Next.js/Vinext sous Node.js 22+ av
 - Migrations D1 historiques : `legacy/d1/drizzle/` garde l'historique SQLite/D1 pour vérification et import. Ce répertoire n'est pas la source de vérité du runtime PostgreSQL.
 - `drizzle.config.ts` sert à générer les artefacts PostgreSQL depuis `db/schema.ts` vers `postgres/generated`. Les migrations réellement appliquées en production restent celles de `postgres/migrations`.
 
-## Baseline technique - clarity-crm_v0.3-foundations
+## Baseline technique historique — `clarity-crm_v0.3-foundations`
 
 L'état consolidé des fondations est la baseline technique de référence pour la construction de `clarity-crm_v1.0`.
 
@@ -50,11 +50,13 @@ Dette connue non bloquante pour le cœur CRM :
 
 - le provisioning administratif complet des organisations (création/renommage/archivage) n'est pas encore exposé tant que sa politique n'est pas spécifiée.
 
-## Prochaine étape de clarity-crm_v1.0
+## État fonctionnel actuel
 
-Le prochain livrable reste le cœur CRM universel : Sociétés, Contacts, Leads, Opportunités enrichies, Rendez-vous, Tâches, Notes, Documents, Produits/Services, Devis, Factures, Contrats, Timeline, recherche, notifications, dashboards et reporting basés sur les données persistantes réelles.
+Le moteur CRM universel, les configurations, formulaires, automatisations, modules, templates et webhooks existent à des niveaux différents de complétude. La racine `/` expose la console branchée aux API persistantes ; l'ancien cockpit UX de démonstration n'est plus la route principale.
 
-Les objets configurables, pipelines dynamiques, formulaires, automatisations, modules, templates, API générique et webhooks sont construits sur ce même socle. Les webhooks sortants sont soumis à une politique anti-SSRF avec HTTPS public, allowlist optionnelle, résolution DNS juste avant envoi, blocage des adresses privées/réservées et lecture bornée des réponses.
+Les documents binaires POSIX, les notifications internes, l'import CSV contrôlé (aperçu avant écriture) et les exports CSV/XLSX sont implémentés sur les API et la console, et validés par la recette CI PostgreSQL. Le dashboard actuel est calculé depuis les données CRM accessibles, mais attend encore une recette PostgreSQL complète.
+
+Les webhooks sortants sont soumis à une politique anti-SSRF avec HTTPS public, allowlist optionnelle, résolution DNS juste avant envoi, blocage des adresses privées/réservées et lecture bornée des réponses.
 
 ## Installation POSIX courte
 

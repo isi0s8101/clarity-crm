@@ -10,9 +10,11 @@ import {
   getCrmRecord,
   updateCrmRecord,
 } from "@/lib/crm-core";
+import { assertSameOriginMutation } from "@/lib/native-auth";
 
 export async function POST(request: NextRequest) {
   try {
+    assertSameOriginMutation(request);
     const actor = await resolveAuthContext(request);
     const body = (await request.json()) as Record<string, unknown>;
     const intent = typeof body.intent === "string" ? body.intent : "";

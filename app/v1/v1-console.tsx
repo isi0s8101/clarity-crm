@@ -10,7 +10,7 @@ const TYPES = [
   ["task", "Tâches"],
   ["appointment", "Rendez-vous"],
   ["note", "Notes"],
-  ["document", "Documents"],
+  ["document", "Documents (fiches)"],
   ["product", "Produits"],
   ["service", "Services"],
   ["quote", "Devis"],
@@ -18,7 +18,7 @@ const TYPES = [
   ["contract", "Contrats"],
 ] as const;
 
-type View = "crm" | "config" | "automations" | "webhooks" | "forms";
+type View = "dashboard" | "crm" | "config" | "automations" | "webhooks" | "forms" | "notifications";
 type SessionUser = { email: string; displayName: string; role: "admin" | "user"; tenantId: string; teamId: string };
 type RecordItem = {
   id: string;
@@ -47,6 +47,17 @@ type TimelineItem = {
   actorId: string;
   createdAt: string;
 };
+type DashboardMetrics = {
+  openOpportunities: number;
+  pipelineAmountCents: number;
+  stageCounts: Record<string, number>;
+  wonOpportunities: number;
+  openTasks: number;
+  overdueTasks: number;
+  activity: TimelineItem[];
+};
+type DocumentItem = { id: string; originalName: string; normalizedName: string; mimeType: string; sizeBytes: number; createdAt: string };
+type NotificationItem = { id: string; type: string; message: string; resourceType: string; resourceId: string; readAt: string | null; createdAt: string };
 
 const EXAMPLES: Record<string, Record<string, unknown>> = {
   company: { website: "https://example.com" },
@@ -56,7 +67,7 @@ const EXAMPLES: Record<string, Record<string, unknown>> = {
   task: { dueAt: "2026-09-15T09:00:00Z", completed: false },
   appointment: { startsAt: "2026-09-15T09:00:00Z", endsAt: "2026-09-15T10:00:00Z" },
   note: { body: "Compte rendu" },
-  document: { fileName: "document.pdf", mimeType: "application/pdf", url: "https://example.com/document.pdf" },
+  document: {},
   product: { unitPriceCents: 10000, currency: "EUR" },
   service: { unitPriceCents: 10000, currency: "EUR" },
   quote: { currency: "EUR", lines: [{ description: "Service", quantity: 1, unitPriceCents: 10000, taxRateBasisPoints: 2000 }] },
@@ -74,7 +85,7 @@ const CONFIG_EXAMPLES: Record<string, Record<string, unknown>> = {
 };
 
 export function V1Console({ user }: { user: { email: string; displayName: string } }) {
-  const [view, setView] = useState<View>("crm");
+  const [view, setView] = useState<View>("dashboard");
   const [session, setSession] = useState<SessionUser | null>(null);
   const [type, setType] = useState("company");
   const [records, setRecords] = useState<RecordItem[]>([]);
@@ -93,6 +104,12 @@ export function V1Console({ user }: { user: { email: string; displayName: string
   const [forms, setForms] = useState<ConfigurationItem[]>([]);
   const [selectedFormKey, setSelectedFormKey] = useState("");
   const [formFieldValues, setFormFieldValues] = useState<Record<string, string>>({ title: "Nouvel enregistrement" });
+  const [dashboard, setDashboard] = useState<DashboardMetrics | null>(null);
+  const [documents, setDocuments] = useState<DocumentItem[]>([]);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [unreadNotifications, setUnreadNotifications] = useState(0);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importPreview, setImportPreview] = useState<Record<string, unknown> | null>(null);
 
   const isAdmin = session?.role === "admin";
   const typeLabel = useMemo(() => TYPES.find(([key]) => key === type)?.[1] ?? type, [type]);
@@ -129,6 +146,16 @@ export function V1Console({ user }: { user: { email: string; displayName: string
     }
   }, [isAdmin, request]);
 
+  const loadDashboard = useCallback(async () => {
+    try {
+      const payload = await request("/api/dashboard") as unknown as DashboardMetrics;
+      setDashboard(payload);
+    } catch (error) {
+      setDashboard(null);
+      setMessage(errorMessage(error));
+    }
+  }, [request]);
+
   useEffect(() => {
     request("/api/session")
       .then((payload) => setSession(payload.user as SessionUser))
@@ -136,6 +163,7 @@ export function V1Console({ user }: { user: { email: string; displayName: string
   }, [request]);
 
   useEffect(() => {
+    if (view === "dashboard") void Promise.resolve().then(loadDashboard);
     if (view === "crm") void Promise.resolve().then(loadRecords);
     if (view === "config") void Promise.resolve().then(loadConfigurations);
     if (view === "forms") {
@@ -160,7 +188,12 @@ export function V1Console({ user }: { user: { email: string; displayName: string
         .then((payload) => setWebhookDeliveries(Array.isArray(payload.deliveries) ? payload.deliveries as Array<Record<string, unknown>> : []))
         .catch((error) => setMessage(errorMessage(error)));
     }
-  }, [isAdmin, loadConfigurations, loadRecords, request, selectedFormKey, view]);
+    if (view === "notifications") {
+      request("/api/notifications")
+        .then((payload) => { setNotifications(Array.isArray(payload.items) ? payload.items as NotificationItem[] : []); setUnreadNotifications(typeof payload.unread === "number" ? payload.unread : 0); })
+        .catch((error) => setMessage(errorMessage(error)));
+    }
+  }, [isAdmin, loadConfigurations, loadDashboard, loadRecords, request, selectedFormKey, view]);
 
   const changeType = (nextType: string) => {
     setType(nextType);
@@ -171,6 +204,7 @@ export function V1Console({ user }: { user: { email: string; displayName: string
     });
     setSelected(null);
     setTimeline([]);
+    setDocuments([]);
   };
 
   const createRecord = async (event: FormEvent) => {
@@ -197,12 +231,55 @@ export function V1Console({ user }: { user: { email: string; displayName: string
   const openRecord = async (item: RecordItem) => {
     setSelected(item);
     try {
-      const payload = await request(`/api/crm/timeline?recordId=${encodeURIComponent(item.id)}`);
-      setTimeline(Array.isArray(payload.items) ? payload.items as TimelineItem[] : []);
+      const [timelinePayload, documentPayload] = await Promise.all([
+        request(`/api/crm/timeline?recordId=${encodeURIComponent(item.id)}`),
+        request(`/api/documents?recordId=${encodeURIComponent(item.id)}`),
+      ]);
+      setTimeline(Array.isArray(timelinePayload.items) ? timelinePayload.items as TimelineItem[] : []);
+      setDocuments(Array.isArray(documentPayload.items) ? documentPayload.items as DocumentItem[] : []);
     } catch (error) {
       setTimeline([]);
+      setDocuments([]);
       setMessage(errorMessage(error));
     }
+  };
+
+  const uploadDocument = async (file: File) => {
+    if (!selected) return;
+    setBusy(true);
+    try {
+      const form = new FormData(); form.set("recordId", selected.id); form.set("file", file);
+      const payload = await request("/api/documents", { method: "POST", body: form });
+      setDocuments((current) => [payload.item as DocumentItem, ...current]);
+      setMessage("Document téléversé et lié à la fiche.");
+    } catch (error) { setMessage(errorMessage(error)); } finally { setBusy(false); }
+  };
+
+  const archiveDocument = async (id: string) => {
+    try {
+      await request("/api/documents", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id }) });
+      setDocuments((current) => current.filter((item) => item.id !== id));
+      setMessage("Document archivé.");
+    } catch (error) { setMessage(errorMessage(error)); }
+  };
+
+  const previewImport = async (confirm: boolean) => {
+    if (!importFile) return;
+    setBusy(true);
+    try {
+      const form = new FormData(); form.set("type", type); form.set("file", importFile); form.set("confirm", String(confirm));
+      const payload = await request("/api/crm/import", { method: "POST", body: form });
+      setImportPreview(payload);
+      if (confirm) { setMessage("Import exécuté : consultez le rapport ci-dessous."); await loadRecords(); }
+    } catch (error) { setMessage(errorMessage(error)); } finally { setBusy(false); }
+  };
+
+  const markNotificationRead = async (id: string) => {
+    try {
+      await request("/api/notifications", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id }) });
+      setNotifications((current) => current.map((item) => item.id === id ? { ...item, readAt: new Date().toISOString() } : item));
+      setUnreadNotifications((count) => Math.max(0, count - 1));
+    } catch (error) { setMessage(errorMessage(error)); }
   };
 
   const archiveSelected = async () => {
@@ -212,6 +289,7 @@ export function V1Console({ user }: { user: { email: string; displayName: string
       await request(`/api/crm?id=${encodeURIComponent(selected.id)}`, { method: "DELETE" });
       setSelected(null);
       setTimeline([]);
+      setDocuments([]);
       await loadRecords();
       setMessage("Enregistrement archivé.");
     } catch (error) {
@@ -325,17 +403,19 @@ export function V1Console({ user }: { user: { email: string; displayName: string
       <div className="mx-auto grid max-w-[1600px] gap-5 p-5 lg:grid-cols-[220px_1fr] lg:p-8">
         <aside className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
           <nav className="space-y-1">
-            {(["crm", "forms", "config", "automations", "webhooks"] as View[]).map((item) => (
+            {(["dashboard", "crm", "forms", "config", "automations", "webhooks", "notifications"] as View[]).map((item) => (
               <button key={item} className={`w-full rounded-xl px-3 py-2 text-left text-sm font-medium ${view === item ? "bg-slate-950 text-white" : "text-slate-600 hover:bg-slate-100"}`} onClick={() => setView(item)}>
-                {item === "crm" ? "CRM universel" : item === "forms" ? "Formulaires" : item === "config" ? "Configuration" : item === "automations" ? "Automatisations" : "Webhooks"}
+                {item === "dashboard" ? "Dashboard" : item === "crm" ? "CRM universel" : item === "forms" ? "Formulaires" : item === "config" ? "Configuration" : item === "automations" ? "Automatisations" : item === "webhooks" ? "Webhooks" : `Notifications${unreadNotifications ? ` (${unreadNotifications})` : ""}`}
               </button>
             ))}
           </nav>
-          <div className="mt-5 border-t border-slate-100 pt-4 text-xs text-slate-500">Données persistantes D1 · RBAC serveur · isolation tenant</div>
+          <div className="mt-5 border-t border-slate-100 pt-4 text-xs text-slate-500">Données PostgreSQL persistantes · RBAC serveur · isolation tenant</div>
         </aside>
 
         <section className="min-w-0 space-y-5">
           {message ? <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm">{message}</div> : null}
+
+          {view === "dashboard" ? <section className="space-y-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-semibold">Dashboard réel</h2><p className="text-sm text-slate-500">Indicateurs calculés uniquement à partir des données accessibles dans le tenant courant.</p></div><button onClick={() => void loadDashboard()} className="rounded-lg border px-3 py-2 text-sm">Actualiser</button></div>{dashboard ? <><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3"><Metric title="Opportunités ouvertes" value={String(dashboard.openOpportunities)} /><Metric title="Pipeline ouvert" value={formatCents(dashboard.pipelineAmountCents)} /><Metric title="Opportunités gagnées" value={String(dashboard.wonOpportunities)} /><Metric title="Tâches ouvertes" value={String(dashboard.openTasks)} /><Metric title="Tâches échues" value={String(dashboard.overdueTasks)} /><Metric title="Étapes visibles" value={String(Object.keys(dashboard.stageCounts).length)} /></div><div className="grid gap-5 xl:grid-cols-[.9fr_1.1fr]"><div className="rounded-2xl border border-slate-200 bg-white p-5"><h3 className="font-semibold">Répartition du pipeline</h3><div className="mt-4 space-y-3">{Object.keys(dashboard.stageCounts).length ? Object.entries(dashboard.stageCounts).map(([stage, count]) => <div className="flex items-center justify-between border-b border-slate-100 pb-3 text-sm" key={stage}><span>{stage}</span><strong>{count}</strong></div>) : <p className="text-sm text-slate-500">Aucune opportunité accessible.</p>}</div></div><div className="rounded-2xl border border-slate-200 bg-white p-5"><h3 className="font-semibold">Activité récente</h3><div className="mt-4 divide-y divide-slate-100">{dashboard.activity.length ? dashboard.activity.map((item) => <div key={item.id} className="py-3"><strong className="text-sm">{item.summary}</strong><p className="mt-1 text-xs text-slate-500">{item.eventType} · {new Date(item.createdAt).toLocaleString("fr-FR")}</p></div>) : <p className="text-sm text-slate-500">Aucune activité visible.</p>}</div></div></div></> : <p className="rounded-2xl border border-dashed border-slate-200 bg-white p-6 text-sm text-slate-500">Chargement des données du dashboard…</p>}</section> : null}
 
           {view === "crm" ? (
             <>
@@ -355,7 +435,8 @@ export function V1Console({ user }: { user: { email: string; displayName: string
                   <button disabled={busy} className="mt-4 w-full rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Créer l’enregistrement</button>
                 </form>
               </div>
-              {selected ? <section className="grid gap-5 xl:grid-cols-[minmax(260px,.8fr)_minmax(320px,1.35fr)_minmax(240px,.7fr)]"><div className="rounded-2xl border border-slate-200 bg-white p-5"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="text-xs font-semibold uppercase tracking-[.12em] text-blue-700">{TYPES.find(([key]) => key === selected.type)?.[1] ?? selected.type}</p><h2 className="mt-1 truncate text-lg font-semibold">{selected.title}</h2><p className="mt-1 text-sm text-slate-500">{selected.status}</p></div><button disabled={busy} onClick={() => void archiveSelected()} className="rounded-lg border border-red-200 px-3 py-2 text-sm text-red-700">Archiver</button></div><dl className="mt-5 space-y-3 text-sm">{Object.entries(selected.data).slice(0, 5).map(([key, value]) => <div key={key} className="border-b border-slate-100 pb-3"><dt className="text-xs font-medium text-slate-500">{key}</dt><dd className="mt-1 break-words text-slate-900">{typeof value === "string" || typeof value === "number" || typeof value === "boolean" ? String(value) : "Valeur structurée"}</dd></div>)}</dl><details className="mt-4 rounded-xl border border-slate-200 p-3"><summary className="cursor-pointer text-sm font-medium">Afficher les données avancées</summary><pre className="mt-3 max-h-64 overflow-auto rounded-lg bg-slate-950 p-3 text-xs text-slate-100">{pretty(selected.data)}</pre></details></div><div className="rounded-2xl border border-slate-200 bg-white p-5"><h2 className="font-semibold">Activité</h2><p className="mt-1 text-sm text-slate-500">Événements rattachés à cet enregistrement.</p><div className="mt-4 divide-y divide-slate-100">{timeline.length ? timeline.map((item) => <div key={item.id} className="py-4"><strong className="text-sm">{item.summary}</strong><p className="mt-1 text-xs text-slate-500">{item.eventType} · {new Date(item.createdAt).toLocaleString("fr-FR")}</p></div>) : <p className="rounded-xl border border-dashed border-slate-200 p-4 text-sm text-slate-500">Aucune activité visible pour le moment.</p>}</div></div><aside className="rounded-2xl border border-slate-200 bg-white p-5"><h2 className="font-semibold">Contexte</h2><dl className="mt-4 space-y-4 text-sm"><div><dt className="text-xs font-medium text-slate-500">Responsable</dt><dd className="mt-1 break-all">{selected.ownerId}</dd></div><div><dt className="text-xs font-medium text-slate-500">Équipe</dt><dd className="mt-1 break-all">{selected.teamId}</dd></div><div><dt className="text-xs font-medium text-slate-500">Créé le</dt><dd className="mt-1">{new Date(selected.createdAt).toLocaleString("fr-FR")}</dd></div><div><dt className="text-xs font-medium text-slate-500">Mis à jour</dt><dd className="mt-1">{new Date(selected.updatedAt).toLocaleString("fr-FR")}</dd></div></dl></aside></section> : null}
+              <div className="grid gap-5 xl:grid-cols-2"><div className="rounded-2xl border border-slate-200 bg-white p-5"><h2 className="font-semibold">Import CSV contrôlé</h2><p className="mt-1 text-sm text-slate-500">Aperçu obligatoire avant écriture · UTF-8 · doublons et validations serveur.</p><input className="mt-4 block w-full text-sm" type="file" accept=".csv,text/csv" onChange={(event) => { setImportFile(event.target.files?.[0] ?? null); setImportPreview(null); }} /><div className="mt-3 flex gap-2"><button disabled={busy || !importFile} onClick={() => void previewImport(false)} className="rounded-lg border px-3 py-2 text-sm disabled:opacity-50">Prévisualiser</button><button disabled={busy || !importPreview || !importFile} onClick={() => void previewImport(true)} className="rounded-lg bg-blue-600 px-3 py-2 text-sm text-white disabled:opacity-50">Confirmer l’import</button></div>{importPreview ? <pre className="mt-4 max-h-48 overflow-auto rounded-lg bg-slate-950 p-3 text-xs text-slate-100">{pretty(importPreview)}</pre> : null}</div><div className="rounded-2xl border border-slate-200 bg-white p-5"><h2 className="font-semibold">Export contrôlé</h2><p className="mt-1 text-sm text-slate-500">Périmètre RBAC/scopes, limite de volume et protection contre les formules.</p><div className="mt-4 flex gap-2"><a className="rounded-lg border px-3 py-2 text-sm" href={`/api/crm/export?type=${encodeURIComponent(type)}`}>CSV UTF-8</a><a className="rounded-lg border px-3 py-2 text-sm" href={`/api/crm/export?type=${encodeURIComponent(type)}&format=xlsx`}>Excel (.xlsx)</a></div></div></div>
+              {selected ? <section className="grid gap-5 xl:grid-cols-[minmax(260px,.8fr)_minmax(320px,1.35fr)_minmax(240px,.7fr)]"><div className="rounded-2xl border border-slate-200 bg-white p-5"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="text-xs font-semibold uppercase tracking-[.12em] text-blue-700">{TYPES.find(([key]) => key === selected.type)?.[1] ?? selected.type}</p><h2 className="mt-1 truncate text-lg font-semibold">{selected.title}</h2><p className="mt-1 text-sm text-slate-500">{selected.status}</p></div><button disabled={busy} onClick={() => void archiveSelected()} className="rounded-lg border border-red-200 px-3 py-2 text-sm text-red-700">Archiver</button></div><dl className="mt-5 space-y-3 text-sm">{Object.entries(selected.data).slice(0, 5).map(([key, value]) => <div key={key} className="border-b border-slate-100 pb-3"><dt className="text-xs font-medium text-slate-500">{key}</dt><dd className="mt-1 break-words text-slate-900">{typeof value === "string" || typeof value === "number" || typeof value === "boolean" ? String(value) : "Valeur structurée"}</dd></div>)}</dl><details className="mt-4 rounded-xl border border-slate-200 p-3"><summary className="cursor-pointer text-sm font-medium">Afficher les données avancées</summary><pre className="mt-3 max-h-64 overflow-auto rounded-lg bg-slate-950 p-3 text-xs text-slate-100">{pretty(selected.data)}</pre></details></div><div className="rounded-2xl border border-slate-200 bg-white p-5"><h2 className="font-semibold">Activité</h2><p className="mt-1 text-sm text-slate-500">Événements rattachés à cet enregistrement.</p><div className="mt-4 divide-y divide-slate-100">{timeline.length ? timeline.map((item) => <div key={item.id} className="py-4"><strong className="text-sm">{item.summary}</strong><p className="mt-1 text-xs text-slate-500">{item.eventType} · {new Date(item.createdAt).toLocaleString("fr-FR")}</p></div>) : <p className="rounded-xl border border-dashed border-slate-200 p-4 text-sm text-slate-500">Aucune activité visible pour le moment.</p>}</div></div><aside className="rounded-2xl border border-slate-200 bg-white p-5"><h2 className="font-semibold">Documents liés</h2><p className="mt-1 text-xs text-slate-500">Stockage POSIX protégé.</p><input disabled={busy} className="mt-3 block w-full text-xs" type="file" accept=".pdf,.txt,.csv,.jpg,.jpeg,.png,.docx,.xlsx" onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadDocument(file); event.currentTarget.value = ""; }} /><div className="mt-3 space-y-2">{documents.length ? documents.map((document) => <div className="flex gap-2" key={document.id}><a className="block min-w-0 flex-1 rounded border p-2 text-xs hover:bg-slate-50" href={`/api/documents/download?id=${encodeURIComponent(document.id)}`}>{document.originalName} · {Math.ceil(document.sizeBytes / 1024)} Ko</a><button disabled={busy} onClick={() => void archiveDocument(document.id)} className="rounded border px-2 text-xs text-red-700">Archiver</button></div>) : <p className="text-xs text-slate-500">Aucun document actif.</p>}</div></aside></section> : null}
             </>
           ) : null}
 
@@ -364,6 +445,7 @@ export function V1Console({ user }: { user: { email: string; displayName: string
           {view === "forms" ? <div className="grid gap-5 xl:grid-cols-[280px_1fr]"><div className="rounded-2xl border border-slate-200 bg-white p-5"><h2 className="font-semibold">Formulaires actifs</h2><p className="mt-1 text-sm text-slate-500">Choisissez un parcours configuré par votre équipe.</p><div className="mt-4 divide-y">{forms.length === 0 ? <p className="py-6 text-sm text-slate-500">Aucun formulaire publié.</p> : forms.map((item) => <button key={item.id} onClick={() => { const key = String(item.definition.key ?? ""); setSelectedFormKey(key); setFormFieldValues({}); }} className={`w-full rounded-lg py-3 text-left ${selectedFormKey === String(item.definition.key ?? "") ? "bg-blue-50 px-3" : ""}`}><strong className="text-sm">{item.name}</strong><p className="text-xs text-slate-500">{String(item.definition.key ?? "")} · {Array.isArray(item.definition.fields) ? item.definition.fields.length : 0} champs</p></button>)}</div></div><form onSubmit={submitConfiguredForm} className="rounded-2xl border border-slate-200 bg-white p-5"><h2 className="font-semibold">{selectedForm?.name ?? "Soumettre un formulaire"}</h2><p className="mt-1 text-sm text-slate-500">Les champs requis sont indiqués. La validation métier reste côté serveur.</p>{selectedForm ? <div className="mt-5 space-y-4">{selectedFormFields.map((field, index) => { const key = typeof field.key === "string" ? field.key : `field_${index + 1}`; const label = typeof field.label === "string" ? field.label : key; const fieldType = typeof field.type === "string" ? field.type : "text"; const value = formFieldValues[key] ?? ""; const common = { className: "mt-1 w-full rounded-lg border border-slate-200 px-3 py-2", value, onChange: (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setFormFieldValues((current) => ({ ...current, [key]: event.target.value })) }; return <label key={key} className="block text-sm">{label}{field.required ? <span className="ml-1 text-red-600">*</span> : null}{fieldType === "textarea" ? <textarea {...common} rows={4} /> : <input {...common} type={fieldType === "number" || fieldType === "email" || fieldType === "date" ? fieldType : "text"} />}</label>; })}</div> : <div className="mt-5 rounded-lg border border-dashed p-4 text-sm text-slate-500">Sélectionnez un formulaire pour afficher ses champs.</div>}<button disabled={busy || !selectedFormKey} className="mt-5 w-full rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white">Valider et créer</button></form></div> : null}
 
           {view === "automations" ? <div className="grid gap-5 xl:grid-cols-[1fr_420px]"><div className="rounded-2xl border border-slate-200 bg-white p-5"><div className="flex items-center justify-between gap-3"><div><h2 className="font-semibold">Workflow builder</h2><p className="mt-1 text-sm text-slate-500">Visualisation des workflows existants, sans créer de second moteur.</p></div><button onClick={() => setView("config")} className="rounded-lg border px-3 py-2 text-sm">Configurer</button></div><div className="mt-5 space-y-4">{automationConfigs.length === 0 ? <p className="rounded-lg border border-dashed p-6 text-sm text-slate-500">Aucune automatisation configurée.</p> : automationConfigs.map((item) => <article key={item.id} className="rounded-xl border border-slate-200 p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-medium">{item.name}</h3><p className="text-xs text-slate-500">{String(item.definition.key ?? item.id)} · v{item.version}</p></div>{isAdmin ? <button disabled={busy} onClick={() => void toggleAutomation(item)} className={`rounded-lg px-3 py-2 text-xs font-medium ${item.active ? "bg-green-50 text-green-700" : "bg-slate-100 text-slate-600"}`}>{item.active ? "Actif · désactiver" : "Inactif · activer"}</button> : <span className="text-xs text-slate-500">{item.active ? "Actif" : "Inactif"}</span>}</div><div className="mt-4 grid gap-3 md:grid-cols-3"><WorkflowStep title="Déclencheur" value={formatWorkflowValue(item.definition.trigger)} /><WorkflowStep title="Conditions" value={formatWorkflowValue(item.definition.conditions)} /><WorkflowStep title="Actions" value={formatWorkflowValue(item.definition.actions)} /></div><details className="mt-4"><summary className="cursor-pointer text-xs font-medium">Voir le flux complet</summary><pre className="mt-2 max-h-52 overflow-auto rounded-lg bg-slate-950 p-3 text-[11px] text-slate-100">{pretty(item.definition)}</pre></details></article>)}</div></div><aside className="rounded-2xl border border-slate-200 bg-white p-5"><h2 className="font-semibold">Exécutions réelles</h2><p className="mb-4 mt-1 text-sm text-slate-500">Journal auditable, limité au tenant courant.</p><pre className="max-h-[520px] overflow-auto rounded-xl bg-slate-950 p-4 text-xs text-slate-100">{pretty(automationRuns)}</pre></aside></div> : null}
+          {view === "notifications" ? <div className="rounded-2xl border border-slate-200 bg-white p-5"><h2 className="font-semibold">Notifications internes</h2><p className="mt-1 text-sm text-slate-500">{unreadNotifications} non lue(s), persistées par tenant et destinataire.</p><div className="mt-5 divide-y divide-slate-100">{notifications.length ? notifications.map((item) => <div key={item.id} className="flex items-start justify-between gap-4 py-4"><div><strong className="text-sm">{item.message}</strong><p className="mt-1 text-xs text-slate-500">{item.type} · {new Date(item.createdAt).toLocaleString("fr-FR")}</p>{item.resourceId ? <button onClick={() => { setView("crm"); setMessage(`Ressource liée : ${item.resourceType} / ${item.resourceId}`); }} className="mt-2 text-xs text-blue-700">Voir la ressource liée</button> : null}</div>{item.readAt ? <span className="text-xs text-slate-500">Lu</span> : <button onClick={() => void markNotificationRead(item.id)} className="rounded border px-2 py-1 text-xs">Marquer lue</button>}</div>) : <p className="py-8 text-sm text-slate-500">Aucune notification.</p>}</div></div> : null}
           {view === "webhooks" ? <div className="rounded-2xl border border-slate-200 bg-white p-5"><h2 className="font-semibold">Livraisons webhook</h2><p className="mb-4 text-sm text-slate-500">HMAC-SHA256, journalisation et politique SSRF côté serveur.</p>{isAdmin ? <pre className="max-h-[620px] overflow-auto rounded-xl bg-slate-950 p-4 text-xs text-slate-100">{pretty(webhookDeliveries)}</pre> : <p className="text-sm text-slate-500">Réservé à l’administration.</p>}</div> : null}
         </section>
       </div>
@@ -396,4 +478,12 @@ function formatWorkflowValue(value: unknown) {
 
 function WorkflowStep({ title, value }: { title: string; value: string }) {
   return <div className="rounded-lg border border-slate-200 bg-slate-50 p-3"><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{title}</p><p className="mt-2 text-sm text-slate-900">{value}</p></div>;
+}
+
+function Metric({ title, value }: { title: string; value: string }) {
+  return <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-sm text-slate-500">{title}</p><strong className="mt-2 block text-2xl tracking-tight">{value}</strong></div>;
+}
+
+function formatCents(value: number) {
+  return new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" }).format(value / 100);
 }

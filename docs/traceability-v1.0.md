@@ -1,65 +1,45 @@
-# Clarity CRM v1.0 - matrice de traçabilité
+# Matrice de traçabilité — `clarity-crm_v1.0-closed`
 
-Cette matrice suit les fonctions réellement implémentées et validées pendant la construction de `clarity-crm_v1.0`.
+Cette matrice est la référence unique de fermeture. Elle décrit le HEAD courant, pas une intention historique. `clarity-crm_v1.0-closed` reste un objectif de fermeture : il ne doit pas être annoncé comme livré tant que toutes les lignes critiques ne sont pas `VALIDÉ`.
 
-Statuts : `VALIDÉ`, `PARTIEL`, `À FAIRE`.
+Statuts autorisés : `VALIDÉ`, `IMPLÉMENTÉ_NON_TESTÉ`, `BACKEND_SEUL`, `UI_SEULE`, `SIMULÉ`, `PARTIEL`, `À_FAIRE`, `HORS_PÉRIMÈTRE`.
 
-| ID | Fonction | Livrable | Modèle / stockage | API / service | Permission | Audit | Tests | Statut |
-|---|---|---|---|---|---|---|---|---|
-| AUTH-01 | Authentification obligatoire | L1 | `users`, `auth_sessions` | `resolveAuthContext` | serveur | n/a | CI + authz + HTTP | VALIDÉ |
-| TEN-01 | Isolation par tenant | L1 | `tenant_id` | `resolveAuthContext` + routes | serveur | oui | policy + HTTP/POSIX | VALIDÉ |
-| TEN-02 | Sélection explicite si plusieurs tenants | L1 | `memberships` | header/cookie validé serveur | serveur | n/a | access-resolution + HTTP/POSIX | VALIDÉ |
-| TEN-03 | Refus d'un tenant arbitraire | L1 | `memberships` / `invitations` | `resolveAuthContext` | serveur | n/a | access-resolution + HTTP/POSIX | VALIDÉ |
-| TEN-04 | Création/lifecycle administratif complet d'organisations | L1 | `organizations` | provisioning à définir | admin | à compléter | à compléter | PARTIEL |
-| TEN-05 | Liste des organisations autorisées | L1 | `memberships` / `invitations` / `organizations` | `/api/tenants` | identité authentifiée | n/a | HTTP/POSIX | VALIDÉ |
-| TEN-06 | Changement d'organisation avec cookie HttpOnly | L1 | cookie `clarity_tenant` | `/api/session/tenant` | validation serveur | n/a | policy + HTTP/POSIX | VALIDÉ |
-| INV-01 | Invitation obligatoire après bootstrap | L1 | `invitations` | `resolveAuthContext` | serveur | oui | access-resolution + HTTP/POSIX | VALIDÉ |
-| INV-02 | Bootstrap premier administrateur | L1 | `organizations`, `memberships`, `auth_credentials` | `bootstrap:admin` | serveur | indirect | POSIX + CI | VALIDÉ |
-| RBAC-01 | Profils admin / user | L1 | `memberships.role` | authz | serveur | oui | authz/admin + HTTP/POSIX | VALIDÉ |
-| RBAC-02 | Scopes personal / team / tenant | L1 | `role_permissions` | `requirePermission` | serveur | oui | shared policy + HTTP/POSIX | VALIDÉ |
-| RBAC-03 | Scope opportunités | L1 | `opportunities` | `/api/opportunities` | serveur | oui | policy + HTTP/POSIX | VALIDÉ |
-| RBAC-04 | Scope audit | L1 | `audit_events.team_id`, `actor_id` | `/api/audit` | serveur | oui | policy + migration + HTTP/POSIX | VALIDÉ |
-| ADMIN-01 | Administration membres/équipes/invitations | L1 | tables dédiées | `/api/admin/access` | admin | oui | admin access + HTTP/POSIX | VALIDÉ |
-| USER-01 | Compte actif / désactivé | L1 | `memberships.status` | `resolveAuthContext` | serveur | oui | access-resolution + HTTP/POSIX | VALIDÉ |
-| AUD-01 | Audit tenant-aware | L1 | `audit_events` | `audit()` | serveur | n/a | migration + HTTP/POSIX | VALIDÉ |
-| DB-01 | Migrations PostgreSQL reproductibles | L1 | `postgres/migrations` | `npm run db:migrate` | n/a | n/a | PostgreSQL CI + checksum | VALIDÉ |
-| DB-02 | Drizzle D1 classé en legacy | L1 | `legacy/d1/drizzle` | tests legacy uniquement | n/a | n/a | `drizzle-legacy.test.mjs` | VALIDÉ |
-| DB-03 | Import D1 vers PostgreSQL | L1 | `_clarity_legacy_imports` | `scripts/migrate-legacy-d1.mjs` | opérateur | n/a | `ci-legacy-d1-migration.sh` | VALIDÉ |
-| CI-01 | Installation CI | L1 | n/a | GitHub Actions | n/a | n/a | `npm ci` | VALIDÉ |
-| CI-02 | Lint | L1 | n/a | GitHub Actions | n/a | n/a | ESLint | VALIDÉ |
-| CI-03 | Tests | L1 | n/a | GitHub Actions | n/a | n/a | `npm test` | VALIDÉ |
-| CI-04 | Typecheck | L1 | n/a | GitHub Actions | n/a | n/a | `tsc --noEmit` | VALIDÉ |
-| CI-05 | Build | L1 | n/a | GitHub Actions | n/a | n/a | Next build | VALIDÉ |
-| E2E-01 | API réelle POSIX | L1 | PostgreSQL | routes HTTP | serveur | oui | `ci-e2e-posix.sh` | VALIDÉ |
-| WEBHOOK-01 | Politique anti-SSRF webhook sortant | L3 | configuration webhook | `dispatchOutboundWebhooks` | admin webhook | oui | `webhook-security.test.mjs` | VALIDÉ |
-| WEBHOOK-02 | Lecture bornée réponse webhook | L3 | `webhook_deliveries` | `readLimitedResponseText` | admin webhook | oui | réponse volumineuse testée | VALIDÉ |
-| GOV-01 | Gouvernance GitHub cible | L0 | dépôt GitHub | PR + checks + protection | mainteneur | n/a | documentation | PARTIEL |
+| ID | Version / phase | Fonctionnalité | Stockage | API / backend | UI | RBAC | Tenant-aware | Audit | Tests / recette | Statut |
+|---|---|---|---|---|---|---|---|---|---|---|
+| AUTH-01 | v0.1 | Session native obligatoire | `auth_credentials`, `auth_sessions` | `resolveAuthContext` | login | oui | n/a | session/login | unitaires ; recette POSIX à rejouer | IMPLÉMENTÉ_NON_TESTÉ |
+| TEN-01 | v0.1 | Tenant résolu serveur et sélection explicite | memberships/invitations | session, tenants | sélecteur tenant | oui | oui | accès sensibles | unitaires ; recette POSIX à rejouer | IMPLÉMENTÉ_NON_TESTÉ |
+| RBAC-01 | v0.1 | Rôles admin/user, actions et scopes | `role_permissions` | `requirePermission` | partiel | oui | oui | mutations | tests `authz` ; recette POSIX à rejouer | IMPLÉMENTÉ_NON_TESTÉ |
+| AUD-01 | v0.1 | Journal d'audit tenant-aware | `audit_events` | `audit()` | audit admin existant | oui | oui | n/a | tests de politique ; recette POSIX à rejouer | IMPLÉMENTÉ_NON_TESTÉ |
+| SEC-01 | v0.1 | Same-origin des mutations à cookie | n/a | `assertSameOriginMutation` sur routes métier | n/a | n/a | n/a | n/a | CI PostgreSQL : mutation cross-site refusée | VALIDÉ |
+| CRM-01 | v0.2 | Moteur universel des 13 objets coeur | `crm_records` | `/api/crm` | console principale | oui | oui | create/update/archive | E2E legacy D1 obsolète ; recette PostgreSQL à rejouer | PARTIEL |
+| CRM-02 | v0.2 | Liste, recherche, consultation, création | `crm_records` | `/api/crm`, `/api/crm/search` | console principale | oui | oui | création | lint/typecheck ; sans recette PostgreSQL courante | PARTIEL |
+| CRM-03 | v0.2 | Modification depuis fiche métier | `crm_records` | PATCH disponible | non branchée depuis la fiche | oui | oui | oui | tests backend seulement | BACKEND_SEUL |
+| CRM-04 | v0.2 | Fiches Société, Contact, Lead, Opportunité | `crm_records` | API générique | fiche générique de consultation seulement | oui | oui | partiel | sans recette utilisateur PostgreSQL | PARTIEL |
+| CRM-05 | v0.2 | Archivage logique | `crm_records.status` | DELETE `/api/crm` | console principale | oui | oui | oui | tests de politique ; recette PostgreSQL à rejouer | IMPLÉMENTÉ_NON_TESTÉ |
+| REL-01 | v0.2 | Relations entre objets | `crm_relations` | `/api/crm/relations` | non branchées à la fiche principale | oui | oui | création/suppression | E2E legacy D1 seulement, invalide pour runtime cible | BACKEND_SEUL |
+| TIME-01 | v0.2 | Timeline métier | `crm_timeline_events` | `/api/crm/timeline` | affichage fiche | oui | oui | écritures manuelles/métier | lint/typecheck ; recette PostgreSQL à rejouer | PARTIEL |
+| DOC-01 | v0.2 | Stockage documentaire binaire POSIX | `crm_documents` + répertoire POSIX isolé | `/api/documents`, téléchargement protégé | fiche CRM : upload, téléchargement, archivage | oui | oui | upload/download/archive | CI PostgreSQL : upload, stockage, téléchargement | VALIDÉ |
+| SRCH-01 | v0.2 | Recherche globale navigable | `crm_records` | `/api/crm/search` | pas de navigation globale | oui | oui | n/a | tests de politique ; recette PostgreSQL à rejouer | BACKEND_SEUL |
+| NOTIF-01 | v0.2 | Notifications internes persistantes | `crm_notifications` | `/api/notifications`, action d'automatisation | consultation et marquage lu | destinataire serveur | oui | lecture | CI PostgreSQL : automatisation, lecture et marquage lu | VALIDÉ |
+| DASH-01 | v0.2 | KPI calculés depuis données réelles | opportunités, tâches, timeline | `/api/dashboard` | console principale | oui | oui | n/a | tests unitaires, lint, typecheck et build Edge ; recette PostgreSQL à rejouer | IMPLÉMENTÉ_NON_TESTÉ |
+| CFG-01 | v0.3 | Configurations versionnées | `crm_configurations`, versions | `/api/configurations` | console configuration | admin | oui | oui | tests source ; recette PostgreSQL à rejouer | PARTIEL |
+| CFG-02 | v0.3 | Objets/pipelines/formulaires configurables | configurations | validation runtime | formulaires branchés ; objets/pipelines en JSON avancé | oui | oui | oui | E2E legacy D1 seulement | PARTIEL |
+| CFG-03 | v0.3 | Historique et restauration | versions de configuration | PATCH restore | UI présente | admin | oui | oui | E2E legacy D1 seulement | PARTIEL |
+| MOD-01 | v0.3 | Modules persistants et dépendances | configuration `module` | backend de dépendances | pas d'écran modules réel | admin | oui | oui | E2E legacy D1 seulement | BACKEND_SEUL |
+| AUTO-01 | v0.3 | Automatisations persistantes | configuration + `automation_runs` | moteur existant enrichi | liste/activation et journal UI | oui | oui | replay/audit | tests de politique ; recette PostgreSQL d'automatisation reste à ajouter | PARTIEL |
+| AUTO-02 | v0.3 | Limites, corrélation, boucles, retry borné | `automation_runs` | 10 actions, corrélation, profondeur, prévention par corrélation, timeout webhook ; pas de worker/retry asynchrone | journal UI | oui | oui | oui | lint/typecheck/tests ; recette PostgreSQL complète à ajouter | PARTIEL |
+| WEB-01 | v0.3 | Webhooks sortants et anti-SSRF | configs + deliveries | dispatcher sécurisé | journal UI | admin | oui | oui | `webhook-security.test.mjs` ; recette E2E PostgreSQL à rejouer | IMPLÉMENTÉ_NON_TESTÉ |
+| IMP-01 | v0.3 | Import CSV contrôlé | `crm_import_jobs`, `crm_records` | `/api/crm/import` : UTF-8, preview, mapping, doublons, validation, lots contrôlés | console CRM : fichier, aperçu, confirmation, rapport | oui | oui | oui | test parser ; CI PostgreSQL : preview + import persistant | VALIDÉ |
+| EXP-01 | v0.3 | Export CSV protégé | `crm_records` | `/api/crm/export`, scope export et neutralisation formule | console CRM | oui | oui | non | CI PostgreSQL : export CSV | VALIDÉ |
+| EXP-02 | v0.3 | Export XLSX protégé | `crm_records` | `/api/crm/export?format=xlsx`, XLSX minimal sans formule | console CRM | oui | oui | non | CI PostgreSQL : fichier XLSX valide (signature ZIP) | VALIDÉ |
+| D1-01 | legacy | D1 comme import vers PostgreSQL uniquement | `legacy/d1` | `migrate-legacy-d1.mjs` | n/a | opérateur | séparé | import | CI legacy à rejouer avec PostgreSQL | IMPLÉMENTÉ_NON_TESTÉ |
+| D1-02 | legacy | Runtime/recettes D1 anciennes | D1 local | anciens scripts `ci-e2e-*` | n/a | n/a | n/a | n/a | incompatibles avec session native PostgreSQL | HORS_PÉRIMÈTRE |
+| BUILD-01 | qualité | Installation, lint, tests, typecheck | n/a | npm | n/a | n/a | n/a | n/a | passés sur HEAD `4b343ab` | VALIDÉ |
+| BUILD-02 | qualité | Build POSIX Next | n/a | `npm run build` | n/a | n/a | n/a | n/a | bloqué Node 24 / Next 16 (`uv_resident_set_memory`) | IMPLÉMENTÉ_NON_TESTÉ |
+| BUILD-03 | qualité | Build Edge | n/a | `npm run build:edge` | n/a | n/a | n/a | n/a | passé sur HEAD `4b343ab` | VALIDÉ |
 
-## Invariants du Livrable 1
+## Décision de fermeture
 
-1. Une identité non authentifiée ne peut pas obtenir de contexte CRM.
-2. Un identifiant de tenant fourni par le client n'accorde jamais un droit par lui-même.
-3. Un tenant sélectionné doit correspondre à une membership ou une invitation serveur de l'identité authentifiée.
-4. Après le bootstrap initial, un utilisateur sans membership ni invitation est refusé.
-5. Une membership désactivée interdit l'accès au tenant correspondant.
-6. Une équipe référencée doit appartenir au même tenant.
-7. Les ressources métier ne peuvent être visibles que dans le tenant de l'acteur.
-8. Les scopes `personal`, `team` et `tenant` sont appliqués côté serveur.
-9. Un scope `personal` sur l'audit ne retourne que les événements de l'acteur.
-10. Un scope `team` sur l'audit ne retourne que les événements attribués à son équipe.
-11. Les migrations runtime doivent être applicables séquentiellement depuis une base PostgreSQL vide.
-12. Toute nouvelle migration PostgreSQL doit passer le test d'intégrité, conserver son checksum après application et être ajoutée sous `postgres/migrations`.
-13. Les migrations SQLite/D1 historiques doivent rester sous `legacy/d1/drizzle` et ne doivent pas redevenir une chaîne runtime ambiguë à la racine `drizzle/`.
-14. La CI doit rester verte sur installation, lint, tests, typecheck, build, migrations PostgreSQL, recette POSIX et import legacy D1 avant validation d'un livrable.
-15. Le cookie de sélection du tenant n'est qu'un sélecteur : sa valeur est revalidée contre les memberships/invitations côté serveur à chaque résolution de contexte.
-16. Un utilisateur membre de plusieurs tenants doit sélectionner explicitement son tenant actif.
-17. Un webhook sortant doit être revalidé juste avant envoi, y compris résolution DNS, blocage des IP privées/réservées et allowlist optionnelle.
-18. Une réponse webhook sortante ne doit jamais être chargée sans limite stricte.
+Le statut actuel de `clarity-crm_v1.0-closed` est **NON FERMÉ**. Les bloqueurs de fermeture sont au minimum AUTO-01/02 (recette et retry asynchrone), les fiches/relations UI incomplètes et les recettes PostgreSQL réelles non rejouées.
 
-## État de fermeture du Livrable 1
-
-La baseline de sécurité `clarity-crm_v0.3-foundations` est validée pour servir de point de départ au cœur CRM de `clarity-crm_v1.0` : authentification, bootstrap contrôlé, invitation obligatoire après bootstrap, multi-tenant, sélection explicite, RBAC, scopes d'audit, comptes désactivés, migrations PostgreSQL, import D1 contrôlé, CI et recette POSIX réelle sont couverts.
-
-Élément restant volontairement ouvert :
-
-- le workflow administratif de création/renommage/archivage d'organisations doit être spécifié avant d'être exposé afin de ne pas introduire un provisioning tenant permissif.
+La prochaine étape produit demeure `clarity-crm_v1.1`, mais elle ne doit pas commencer avant la résolution explicite des lignes de fermeture ci-dessus ou une décision de réduction de périmètre documentée.

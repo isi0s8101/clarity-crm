@@ -9,6 +9,7 @@ import {
   updateCrmRecord,
 } from "@/lib/crm-core";
 import { authErrorResponse, resolveAuthContext } from "@/lib/authz";
+import { assertSameOriginMutation } from "@/lib/native-auth";
 
 export async function GET(request: NextRequest) {
   try {
@@ -38,6 +39,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    assertSameOriginMutation(request);
     const actor = await resolveAuthContext(request);
     const body = (await request.json()) as Record<string, unknown>;
     const item = await createCrmRecord(actor, body);
@@ -54,6 +56,7 @@ export async function POST(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
   try {
+    assertSameOriginMutation(request);
     const actor = await resolveAuthContext(request);
     const body = (await request.json()) as Record<string, unknown>;
     const id = typeof body.id === "string" ? body.id : "";
@@ -71,6 +74,7 @@ export async function PATCH(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   try {
+    assertSameOriginMutation(request);
     const actor = await resolveAuthContext(request);
     const id = request.nextUrl.searchParams.get("id") ?? "";
     const item = await archiveCrmRecord(actor, id);

@@ -128,6 +128,55 @@ export async function dispatchOutboundWebhooks(
   }
 }
 
+export async function dispatchAutomationWebhook(
+  actor: AuthContext,
+  automationId: string,
+  event: string,
+  record: RuntimeRecord,
+  url: string,
+  correlationId: string,
+) {
+  const deliveryId = crypto.randomUUID();
+  const payload = JSON.stringify({
+    id: deliveryId, event, tenantId: actor.tenantId, occurredAt: new Date().toISOString(),
+    correlationId, source: "automation", record,
+  });
+  const allowPrivate = readEnv("CLARITY_WEBHOOK_ALLOW_PRIVATE_E2E") === "1";
+  const urlPolicy = await validateWebhookTargetUrl(url, {
+    allowPrivate,
+    allowedHosts: readEnv("CLARITY_WEBHOOK_ALLOWED_HOSTS"),
+  });
+  if (!urlPolicy.ok) throw new Error(urlPolicy.error);
+  const secret = await deriveWebhookSecret(actor.tenantId, `automation:${automationId}`);
+  const signature = await signBody(payload, secret);
+  let lastError = "Échec de livraison webhook.";
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const response = await dispatchWebhookRequest(urlPolicy, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json", "user-agent": "ClarityCRM-Automation/1.0",
+          "x-clarity-event": event, "x-clarity-delivery": deliveryId, "x-clarity-correlation": correlationId,
+          "x-clarity-attempt": String(attempt), "x-clarity-signature": `sha256=${signature}`,
+        },
+        body: payload, timeoutMs: 5000, responseLimitBytes: 4096,
+      });
+      await saveDelivery({ id: crypto.randomUUID(), tenantId: actor.tenantId, webhookId: automationId, direction: "automation", event,
+        status: response.ok ? "success" : "failure", requestBody: payload, responseCode: response.status,
+        responseBody: response.responseText, error: response.ok ? "" : `HTTP ${response.status} (tentative ${attempt}/3)` });
+      if (response.ok) return;
+      lastError = `Webhook d'automatisation: HTTP ${response.status}`;
+      if (response.status >= 400 && response.status < 500 && response.status !== 429) break;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : "Échec de livraison webhook.";
+      await saveDelivery({ id: crypto.randomUUID(), tenantId: actor.tenantId, webhookId: automationId, direction: "automation", event,
+        status: "failure", requestBody: payload, error: `${lastError.slice(0, 1900)} (tentative ${attempt}/3)` });
+    }
+    if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, 100 * 2 ** (attempt - 1)));
+  }
+  throw new Error(lastError);
+}
+
 export async function getInboundWebhookConfiguration(
   tenantId: string,
   key: string,

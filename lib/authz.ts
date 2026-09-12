@@ -12,7 +12,7 @@ import {
 } from "@/db/schema";
 import { resolveAccessSelection } from "./access-resolution.js";
 import { canUseScopedResource, tenantSelectorFromHeaders } from "./authz-policy.js";
-import { readNativeIdentity } from "./native-auth";
+import { NativeAuthError, readNativeIdentity } from "./native-auth";
 import { CORE_RECORD_TYPES } from "./crm-policy.js";
 
 export type PermissionAction =
@@ -313,6 +313,9 @@ export async function audit(actor: AuthContext, input: AuditInput) {
 }
 
 export function authErrorResponse(error: unknown) {
+  if (error instanceof NativeAuthError) {
+    return Response.json({ error: error.message }, { status: error.status });
+  }
   if (error instanceof AuthRequiredError) {
     return Response.json({ error: error.message }, { status: error.status });
   }

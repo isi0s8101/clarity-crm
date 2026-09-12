@@ -15,6 +15,7 @@ import {
   crmErrorResponse,
   getCrmRecord,
 } from "@/lib/crm-core";
+import { assertSameOriginMutation } from "@/lib/native-auth";
 
 export async function GET(request: NextRequest) {
   try {
@@ -51,6 +52,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    assertSameOriginMutation(request);
     const actor = await resolveAuthContext(request);
     const scope = await requirePermission(actor, "timeline", "create");
     const body = (await request.json()) as Record<string, unknown>;

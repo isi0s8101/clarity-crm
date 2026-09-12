@@ -215,9 +215,69 @@ export const automationRuns = pgTable(
     input: text("input").notNull().default("{}"),
     output: text("output").notNull().default("{}"),
     error: text("error").notNull().default(""),
+    correlationId: text("correlation_id").notNull().default(""),
+    depth: integer("depth").notNull().default(0),
+    attempt: integer("attempt").notNull().default(1),
     createdAt: createdAt(),
   },
   (table) => [index("idx_automation_runs_tenant_created").on(table.tenantId, table.createdAt)],
+);
+
+export const crmDocuments = pgTable(
+  "crm_documents",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    recordId: text("record_id").notNull().references(() => crmRecords.id, { onDelete: "cascade" }),
+    storageKey: text("storage_key").notNull(),
+    originalName: text("original_name").notNull(),
+    normalizedName: text("normalized_name").notNull(),
+    mimeType: text("mime_type").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    sha256: text("sha256").notNull(),
+    uploadedBy: text("uploaded_by").notNull().references(() => users.id, { onDelete: "restrict" }),
+    status: text("status").notNull().default("active"),
+    createdAt: createdAt(),
+    archivedAt: timestamp("archived_at", { withTimezone: true, mode: "string" }),
+  },
+  (table) => [
+    uniqueIndex("idx_crm_documents_storage_key").on(table.storageKey),
+    index("idx_crm_documents_record").on(table.tenantId, table.recordId, table.status, table.createdAt),
+  ],
+);
+
+export const crmNotifications = pgTable(
+  "crm_notifications",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    recipientId: text("recipient_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    type: text("type").notNull(),
+    message: text("message").notNull(),
+    resourceType: text("resource_type").notNull().default(""),
+    resourceId: text("resource_id").notNull().default(""),
+    readAt: timestamp("read_at", { withTimezone: true, mode: "string" }),
+    createdAt: createdAt(),
+  },
+  (table) => [index("idx_crm_notifications_recipient").on(table.tenantId, table.recipientId, table.readAt, table.createdAt)],
+);
+
+export const crmImportJobs = pgTable(
+  "crm_import_jobs",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    actorId: text("actor_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    objectType: text("object_type").notNull(),
+    status: text("status").notNull(),
+    sourceName: text("source_name").notNull(),
+    totalRows: integer("total_rows").notNull(),
+    importedRows: integer("imported_rows").notNull(),
+    rejectedRows: integer("rejected_rows").notNull(),
+    report: text("report").notNull().default("{}"),
+    createdAt: createdAt(),
+  },
+  (table) => [index("idx_crm_import_jobs_tenant_created").on(table.tenantId, table.createdAt)],
 );
 
 export const webhookDeliveries = pgTable(
