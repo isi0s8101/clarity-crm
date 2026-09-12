@@ -1,4 +1,4 @@
-import { index, integer, pgTable, serial, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { foreignKey, index, integer, pgTable, serial, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 
 const createdAt = () => timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow();
 const updatedAt = () => timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow();
@@ -124,6 +124,11 @@ export const crmRecords = pgTable(
     updatedAt: updatedAt(),
   },
   (table) => [
+    foreignKey({
+      columns: [table.tenantId, table.teamId],
+      foreignColumns: [teams.tenantId, teams.id],
+      name: "fk_crm_records_tenant_team",
+    }).onDelete("restrict"),
     index("idx_crm_records_tenant_type").on(table.tenantId, table.type),
     index("idx_crm_records_tenant_owner").on(table.tenantId, table.ownerId),
     index("idx_crm_records_tenant_team_type").on(table.tenantId, table.teamId, table.type),
@@ -144,6 +149,16 @@ export const crmRelations = pgTable(
     createdAt: createdAt(),
   },
   (table) => [
+    foreignKey({
+      columns: [table.tenantId, table.fromRecordId],
+      foreignColumns: [crmRecords.tenantId, crmRecords.id],
+      name: "fk_crm_relations_tenant_from",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.tenantId, table.toRecordId],
+      foreignColumns: [crmRecords.tenantId, crmRecords.id],
+      name: "fk_crm_relations_tenant_to",
+    }).onDelete("cascade"),
     uniqueIndex("idx_crm_relations_unique").on(table.tenantId, table.fromRecordId, table.toRecordId, table.relationType),
     index("idx_crm_relations_from").on(table.tenantId, table.fromRecordId),
     index("idx_crm_relations_to").on(table.tenantId, table.toRecordId),
@@ -165,6 +180,16 @@ export const crmTimelineEvents = pgTable(
     createdAt: createdAt(),
   },
   (table) => [
+    foreignKey({
+      columns: [table.tenantId, table.recordId],
+      foreignColumns: [crmRecords.tenantId, crmRecords.id],
+      name: "fk_crm_timeline_tenant_record",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.tenantId, table.teamId],
+      foreignColumns: [teams.tenantId, teams.id],
+      name: "fk_crm_timeline_tenant_team",
+    }).onDelete("restrict"),
     index("idx_crm_timeline_record").on(table.tenantId, table.recordId, table.createdAt),
     index("idx_crm_timeline_team").on(table.tenantId, table.teamId, table.createdAt),
   ],
@@ -183,7 +208,10 @@ export const crmConfigurations = pgTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (table) => [index("idx_crm_config_tenant_kind").on(table.tenantId, table.kind)],
+  (table) => [
+    index("idx_crm_config_tenant_kind").on(table.tenantId, table.kind),
+    uniqueIndex("idx_crm_config_tenant_id").on(table.tenantId, table.id),
+  ],
 );
 
 export const crmConfigurationVersions = pgTable(
@@ -200,6 +228,11 @@ export const crmConfigurationVersions = pgTable(
     createdAt: createdAt(),
   },
   (table) => [
+    foreignKey({
+      columns: [table.tenantId, table.configurationId],
+      foreignColumns: [crmConfigurations.tenantId, crmConfigurations.id],
+      name: "fk_crm_config_versions_tenant_config",
+    }).onDelete("cascade"),
     uniqueIndex("idx_crm_config_versions_unique").on(table.tenantId, table.configurationId, table.version),
     index("idx_crm_config_versions_lookup").on(table.tenantId, table.configurationId, table.createdAt),
   ],

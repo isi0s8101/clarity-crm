@@ -14,6 +14,8 @@ Le centre d'aide est déterministe et consomme les fondations existantes :
 
 Le système ne crée pas de second moteur d'authentification, de tenant, de RBAC ou de recherche CRM.
 
+La fermeture v0.3 ajoute les procédures `ADM-REL-001` et `HELP-ERR-007` au catalogue existant. Elles alimentent les pages `/help/user`, `/help/admin`, `/help/troubleshooting` et `/help/glossary` sans créer de second centre de documentation.
+
 ## Format d'une procédure
 
 Le type de référence est `HelpProcedure` dans `lib/help/types.ts`.

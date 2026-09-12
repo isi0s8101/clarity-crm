@@ -105,7 +105,7 @@ async function findForm(tenantId: string, key: string) {
       if (definition && typeof definition === "object" && !Array.isArray(definition)) {
         const parsed = definition as Record<string, unknown>;
         if (parsed.key === key) {
-          return { ...row, active: true, definition: parsed };
+          return { ...row, active: true, definition: await hydrateFormFields(tenantId, parsed) };
         }
       }
     } catch {
@@ -113,6 +113,45 @@ async function findForm(tenantId: string, key: string) {
     }
   }
   return null;
+}
+
+async function hydrateFormFields(tenantId: string, form: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const objectType = typeof form.objectType === "string" ? form.objectType : "";
+  const fields = Array.isArray(form.fields) ? form.fields : [];
+  const objectRows = await getDb()
+    .select({ definition: crmConfigurations.definition })
+    .from(crmConfigurations)
+    .where(and(
+      eq(crmConfigurations.tenantId, tenantId),
+      eq(crmConfigurations.kind, "object"),
+      eq(crmConfigurations.active, 1),
+    ))
+    .limit(300);
+  let objectFields: unknown[] = [];
+  for (const row of objectRows) {
+    try {
+      const definition = JSON.parse(row.definition) as Record<string, unknown>;
+      if (definition.key === objectType && Array.isArray(definition.fields)) {
+        objectFields = definition.fields;
+        break;
+      }
+    } catch {
+      // Une définition illisible n'est jamais exposée comme métadonnée de formulaire.
+    }
+  }
+  const metadata = new Map<string, Record<string, unknown>>();
+  for (const rawField of objectFields) {
+    const field = asObject(rawField);
+    if (field && typeof field.key === "string") metadata.set(field.key, field);
+  }
+  return {
+    ...form,
+    fields: fields.map((rawField) => {
+      const field = asObject(rawField) ?? {};
+      const fieldMetadata = typeof field.key === "string" ? metadata.get(field.key) : undefined;
+      return { ...fieldMetadata, ...field };
+    }),
+  };
 }
 
 function asObject(value: unknown): Record<string, unknown> | null {

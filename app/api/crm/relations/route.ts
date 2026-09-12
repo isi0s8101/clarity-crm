@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { and, eq, or } from "drizzle-orm";
+import { and, eq, or, sql } from "drizzle-orm";
 
 import { getDb } from "@/db";
 import { crmRelations } from "@/db/schema";
@@ -15,6 +15,7 @@ import {
   crmErrorResponse,
   getCrmRecord,
 } from "@/lib/crm-core";
+import { getConfiguredRelationDefinition } from "@/lib/crm-runtime-validation";
 import { assertSameOriginMutation } from "@/lib/native-auth";
 
 export async function GET(request: NextRequest) {
@@ -84,31 +85,52 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Relation cross-tenant interdite." }, { status: 400 });
     }
 
+    const configuredRelation = await getConfiguredRelationDefinition(actor.tenantId, relationType);
+    if (
+      configuredRelation &&
+      (configuredRelation.sourceType !== from.type || configuredRelation.targetType !== to.type)
+    ) {
+      return NextResponse.json({ error: "Objets source ou cible incompatibles avec la relation configurée." }, { status: 400 });
+    }
+
     const db = getDb();
-    const existing = await db
-      .select({ id: crmRelations.id })
-      .from(crmRelations)
-      .where(
-        and(
+    const inserted = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${actor.tenantId}), hashtext(${relationType}))`);
+      if (configuredRelation && configuredRelation.cardinality !== "many_to_many") {
+        const candidates = await tx
+          .select({ fromRecordId: crmRelations.fromRecordId, toRecordId: crmRelations.toRecordId })
+          .from(crmRelations)
+          .where(and(eq(crmRelations.tenantId, actor.tenantId), eq(crmRelations.relationType, relationType)))
+          .limit(10000);
+        const sourceAlreadyLinked = candidates.some((relation) => relation.fromRecordId === fromId);
+        const targetAlreadyLinked = candidates.some((relation) => relation.toRecordId === toId);
+        const violatesCardinality =
+          (configuredRelation.cardinality === "one_to_one" && (sourceAlreadyLinked || targetAlreadyLinked)) ||
+          (configuredRelation.cardinality === "one_to_many" && targetAlreadyLinked) ||
+          (configuredRelation.cardinality === "many_to_one" && sourceAlreadyLinked);
+        if (violatesCardinality) throw new RelationConflictError("Cardinalité de relation dépassée.");
+      }
+      const existing = await tx
+        .select({ id: crmRelations.id })
+        .from(crmRelations)
+        .where(and(
           eq(crmRelations.tenantId, actor.tenantId),
           eq(crmRelations.fromRecordId, fromId),
           eq(crmRelations.toRecordId, toId),
           eq(crmRelations.relationType, relationType),
-        ),
-      )
-      .limit(1);
-    if (existing[0]) {
-      return NextResponse.json({ error: "Relation déjà existante." }, { status: 409 });
-    }
+        ))
+        .limit(1);
+      if (existing[0]) throw new RelationConflictError("Relation déjà existante.");
 
-    const inserted = await db.insert(crmRelations).values({
-      id: crypto.randomUUID(),
-      tenantId: actor.tenantId,
-      fromRecordId: fromId,
-      toRecordId: toId,
-      relationType,
-      createdBy: actor.userId,
-    }).returning();
+      return tx.insert(crmRelations).values({
+        id: crypto.randomUUID(),
+        tenantId: actor.tenantId,
+        fromRecordId: fromId,
+        toRecordId: toId,
+        relationType,
+        createdBy: actor.userId,
+      }).returning();
+    });
 
     await appendTimeline(actor, from, "relation.created", `${from.title} relié à ${to.title}`, {
       relatedRecordId: to.id,
@@ -131,6 +153,9 @@ export async function POST(request: NextRequest) {
     if (authResponse) return authResponse;
     const crmResponse = crmErrorResponse(error);
     if (crmResponse) return crmResponse;
+    if (error instanceof RelationConflictError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
     console.error("crm:relations:create", error);
     return NextResponse.json({ error: "Création de relation impossible." }, { status: 503 });
   }
@@ -178,3 +203,5 @@ function normalizeRelationType(value: unknown) {
   const normalized = value.trim().toLowerCase();
   return /^[a-z][a-z0-9_.:-]{0,79}$/.test(normalized) ? normalized : null;
 }
+
+class RelationConflictError extends Error {}
