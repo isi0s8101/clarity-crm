@@ -75,6 +75,12 @@ export async function readStoredDocument(storageKey: string) {
   return readFile(resolveStoragePath(storageKey));
 }
 
+// Intentionally server-only. Routes return only document IDs and never this path.
+// Local processors (OCR/PDF) must use the same traversal-safe resolver as downloads.
+export function storedDocumentPath(storageKey: string) {
+  return resolveStoragePath(storageKey);
+}
+
 export async function discardStoredDocument(storageKey: string) {
   await unlink(resolveStoragePath(storageKey)).catch(() => undefined);
 }

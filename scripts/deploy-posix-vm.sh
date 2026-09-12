@@ -70,7 +70,7 @@ install_prerequisites() {
   apt-get update
   apt-get install -y --no-install-recommends \
     ca-certificates curl git gnupg build-essential jq coreutils util-linux \
-    openssl postgresql postgresql-client
+    openssl postgresql postgresql-client tesseract-ocr tesseract-ocr-eng tesseract-ocr-fra
 
   if ! node_is_compatible; then
     local arch tmp_key

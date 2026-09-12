@@ -18,7 +18,7 @@ const TYPES = [
   ["contract", "Contrats"],
 ] as const;
 
-type View = "dashboard" | "crm" | "views" | "preferences" | "config" | "automations" | "webhooks" | "forms" | "notifications";
+type View = "dashboard" | "crm" | "views" | "preferences" | "ocr" | "config" | "automations" | "webhooks" | "forms" | "notifications";
 type SessionUser = { email: string; displayName: string; role: "admin" | "user"; tenantId: string; teamId: string };
 type RecordItem = {
   id: string;
@@ -59,6 +59,8 @@ type DashboardMetrics = {
 };
 type DocumentItem = { id: string; originalName: string; normalizedName: string; mimeType: string; sizeBytes: number; currentVersion: number; createdAt: string };
 type DocumentVersionItem = { id: string; version: number; originalName: string; normalizedName: string; mimeType: string; sizeBytes: number; createdAt: string };
+type OcrJobItem = { id: string; status: string; language: string; error: string; createdAt: string };
+type OcrResultItem = { id: string; jobId: string; extractedText: string; correctedText: string; createdAt: string };
 type NotificationItem = { id: string; type: string; message: string; resourceType: string; resourceId: string; readAt: string | null; createdAt: string };
 type SavedView = { id: string; name: string; objectType: string; scope: "personal" | "team" | "tenant"; definition: Record<string, unknown>; isDefault: boolean; version: number; updatedAt: string };
 type PreferenceItem = { settings: Record<string, unknown>; version: number };
@@ -117,6 +119,7 @@ export function V1Console({ user }: { user: { email: string; displayName: string
   const [dashboard, setDashboard] = useState<DashboardMetrics | null>(null);
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [documentVersions, setDocumentVersions] = useState<Record<string, DocumentVersionItem[]>>({});
+  const [ocrHistory, setOcrHistory] = useState<Record<string, { jobs: OcrJobItem[]; results: OcrResultItem[] }>>({});
   const [documentMetadata, setDocumentMetadata] = useState({ category: "", tags: "", description: "" });
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [unreadNotifications, setUnreadNotifications] = useState(0);
@@ -551,6 +554,35 @@ export function V1Console({ user }: { user: { email: string; displayName: string
     } catch (error) { setMessage(errorMessage(error)); } finally { setBusy(false); }
   };
 
+  const loadOcrHistory = async (id: string) => {
+    try {
+      const payload = await request(`/api/documents/${encodeURIComponent(id)}/ocr`);
+      setOcrHistory((current) => ({ ...current, [id]: {
+        jobs: Array.isArray(payload.jobs) ? payload.jobs as OcrJobItem[] : [],
+        results: Array.isArray(payload.results) ? payload.results as OcrResultItem[] : [],
+      } }));
+    } catch (error) { setMessage(errorMessage(error)); }
+  };
+
+  const runOcr = async (id: string, language: "eng" | "fra") => {
+    setBusy(true);
+    try {
+      await request(`/api/documents/${encodeURIComponent(id)}/ocr`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ language }) });
+      await loadOcrHistory(id);
+      setMessage("OCR local exécuté et historisé.");
+    } catch (error) { setMessage(errorMessage(error)); } finally { setBusy(false); }
+  };
+
+  const saveOcrCorrection = async (documentId: string, result: OcrResultItem, correctedText: string) => {
+    setBusy(true);
+    try {
+      const payload = await request(`/api/documents/${encodeURIComponent(documentId)}/ocr`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ resultId: result.id, correctedText }) });
+      const item = payload.item as OcrResultItem;
+      setOcrHistory((current) => ({ ...current, [documentId]: { ...current[documentId], results: (current[documentId]?.results ?? []).map((entry) => entry.id === item.id ? item : entry) } }));
+      setMessage("Correction OCR enregistrée.");
+    } catch (error) { setMessage(errorMessage(error)); } finally { setBusy(false); }
+  };
+
   const archiveDocument = async (id: string) => {
     try {
       await request("/api/documents", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id }) });
@@ -721,9 +753,9 @@ export function V1Console({ user }: { user: { email: string; displayName: string
       <div className="mx-auto grid max-w-[1600px] gap-5 p-5 lg:grid-cols-[220px_1fr] lg:p-8">
         <aside className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
           <nav className="space-y-1">
-            {(["dashboard", "crm", "views", "preferences", "forms", "config", "automations", "webhooks", "notifications"] as View[]).map((item) => (
+            {(["dashboard", "crm", "views", "preferences", "ocr", "forms", "config", "automations", "webhooks", "notifications"] as View[]).map((item) => (
               <button key={item} className={`w-full rounded-xl px-3 py-2 text-left text-sm font-medium ${view === item ? "bg-slate-950 text-white" : "text-slate-600 hover:bg-slate-100"}`} onClick={() => setView(item)}>
-                {item === "dashboard" ? "Dashboard" : item === "crm" ? "CRM universel" : item === "views" ? "Vues enregistrées" : item === "preferences" ? "Préférences" : item === "forms" ? "Formulaires" : item === "config" ? "Configuration" : item === "automations" ? "Automatisations" : item === "webhooks" ? "Webhooks" : `Notifications${unreadNotifications ? ` (${unreadNotifications})` : ""}`}
+                {item === "dashboard" ? "Dashboard" : item === "crm" ? "CRM universel" : item === "views" ? "Vues enregistrées" : item === "preferences" ? "Préférences" : item === "ocr" ? "OCR local" : item === "forms" ? "Formulaires" : item === "config" ? "Configuration" : item === "automations" ? "Automatisations" : item === "webhooks" ? "Webhooks" : `Notifications${unreadNotifications ? ` (${unreadNotifications})` : ""}`}
               </button>
             ))}
           </nav>
@@ -738,6 +770,8 @@ export function V1Console({ user }: { user: { email: string; displayName: string
           {view === "views" ? <div className="grid gap-5 xl:grid-cols-[1fr_360px]"><section className="rounded-2xl border border-slate-200 bg-white p-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold">Vues enregistrées · {typeLabel}</h2><p className="mt-1 text-sm text-slate-500">Les vues sont persistantes et restent soumises aux permissions et scopes du serveur.</p></div><button onClick={() => setView("crm")} className="rounded-lg border px-3 py-2 text-sm">Retour au CRM</button></div><div className="mt-5 divide-y divide-slate-100">{savedViews.length ? savedViews.map((item) => <article key={item.id} className="flex flex-wrap items-center justify-between gap-3 py-4"><div><strong className="text-sm">{item.name}</strong><p className="mt-1 text-xs text-slate-500">{item.scope} · v{item.version}{item.isDefault ? " · vue par défaut" : ""}</p></div><div className="flex gap-2"><button type="button" onClick={() => void applySavedView(item)} className="rounded border px-2 py-1 text-xs">Appliquer</button><button disabled={busy} type="button" onClick={() => void deleteSavedView(item)} className="rounded border border-red-200 px-2 py-1 text-xs text-red-700">Archiver</button></div></article>) : <p className="py-8 text-sm text-slate-500">Aucune vue disponible pour cet objet.</p>}</div></section><form onSubmit={createSavedView} className="rounded-2xl border border-slate-200 bg-white p-5"><h2 className="font-semibold">Enregistrer la vue courante</h2><p className="mt-1 text-sm text-slate-500">Recherche et colonnes actives sont enregistrées côté serveur.</p><label className="mt-4 block text-sm">Nom<input required maxLength={120} className="mt-1 w-full rounded-lg border px-3 py-2" value={savedViewForm.name} onChange={(event) => setSavedViewForm({ ...savedViewForm, name: event.target.value })} /></label><label className="mt-3 block text-sm">Partage<select className="mt-1 w-full rounded-lg border px-3 py-2" value={savedViewForm.scope} onChange={(event) => setSavedViewForm({ ...savedViewForm, scope: event.target.value as SavedView["scope"] })}><option value="personal">Privée</option><option value="team">Équipe</option>{isAdmin ? <option value="tenant">Tenant</option> : null}</select></label><label className="mt-3 flex items-center gap-2 text-sm"><input type="checkbox" checked={savedViewForm.isDefault} onChange={(event) => setSavedViewForm({ ...savedViewForm, isDefault: event.target.checked })} />Définir par défaut</label><button disabled={busy} className="mt-5 w-full rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Enregistrer</button></form></div> : null}
 
           {view === "preferences" ? <form onSubmit={savePreferences} className="max-w-2xl rounded-2xl border border-slate-200 bg-white p-5"><h2 className="font-semibold">Préférences de l’utilisateur</h2><p className="mt-1 text-sm text-slate-500">Ces réglages sont persistés pour votre compte et le tenant courant.</p><div className="mt-5 grid gap-4 sm:grid-cols-2"><label className="text-sm">Page d’accueil<select className="mt-1 w-full rounded-lg border px-3 py-2" value={preferencesForm.homePage} onChange={(event) => setPreferencesForm({ ...preferencesForm, homePage: event.target.value })}><option value="dashboard">Dashboard</option><option value="crm">CRM</option></select></label><label className="text-sm">Taille des listes<input type="number" min="10" max="200" className="mt-1 w-full rounded-lg border px-3 py-2" value={preferencesForm.pageSize} onChange={(event) => setPreferencesForm({ ...preferencesForm, pageSize: Number(event.target.value) })} /></label><label className="text-sm">Densité<select className="mt-1 w-full rounded-lg border px-3 py-2" value={preferencesForm.density} onChange={(event) => setPreferencesForm({ ...preferencesForm, density: event.target.value })}><option value="comfortable">Confortable</option><option value="compact">Compacte</option></select></label><label className="text-sm">Fuseau horaire<input maxLength={120} className="mt-1 w-full rounded-lg border px-3 py-2" value={preferencesForm.timeZone} onChange={(event) => setPreferencesForm({ ...preferencesForm, timeZone: event.target.value })} /></label><label className="text-sm">Format de date<input maxLength={120} className="mt-1 w-full rounded-lg border px-3 py-2" value={preferencesForm.dateFormat} onChange={(event) => setPreferencesForm({ ...preferencesForm, dateFormat: event.target.value })} /></label></div><button disabled={busy} className="mt-5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Enregistrer les préférences</button></form> : null}
+
+          {view === "ocr" ? <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5"><div><h2 className="font-semibold">OCR local</h2><p className="mt-1 text-sm text-slate-500">Tesseract traite seulement des JPEG/PNG déjà autorisés et liés à la fiche sélectionnée. Chaque essai et chaque correction sont persistants.</p></div>{selected ? <div className="space-y-4"><p className="rounded border bg-slate-50 p-3 text-sm">Fiche : <strong>{selected.title}</strong></p>{documents.length ? documents.filter((item) => item.mimeType === "image/jpeg" || item.mimeType === "image/png").map((document) => <article className="rounded-xl border p-4" key={document.id}><div className="flex flex-wrap items-center justify-between gap-3"><div><strong className="text-sm">{document.originalName}</strong><p className="text-xs text-slate-500">JPEG/PNG · maximum deux tentatives explicites</p></div><div className="flex gap-2"><button disabled={busy} type="button" onClick={() => void runOcr(document.id, "fra")} className="rounded border px-3 py-2 text-xs">OCR français</button><button type="button" onClick={() => void loadOcrHistory(document.id)} className="rounded border px-3 py-2 text-xs">Historique</button></div></div>{ocrHistory[document.id]?.jobs.map((job) => <p key={job.id} className="mt-2 text-xs">{job.status} · {job.language}{job.error ? ` · ${job.error}` : ""}</p>)}{ocrHistory[document.id]?.results.map((result) => <div key={result.id} className="mt-3"><textarea defaultValue={result.correctedText || result.extractedText} maxLength={1000000} rows={6} className="w-full rounded border p-2 text-xs" onBlur={(event) => { if (event.currentTarget.value !== (result.correctedText || result.extractedText)) void saveOcrCorrection(document.id, result, event.currentTarget.value); }} /><p className="mt-1 text-xs text-slate-500">La correction est enregistrée à la sortie du champ.</p></div>)}</article>) : <p className="text-sm text-slate-500">Aucune image JPEG/PNG exploitable sur cette fiche.</p>}</div> : <p className="text-sm text-slate-500">Ouvrez d’abord une fiche CRM pour charger ses documents.</p>}</section> : null}
 
           {view === "crm" ? (
             <>

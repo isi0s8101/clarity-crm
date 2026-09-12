@@ -274,6 +274,48 @@ export const crmDocumentVersions = pgTable(
   ],
 );
 
+export const crmOcrJobs = pgTable(
+  "crm_ocr_jobs",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    documentId: text("document_id").notNull().references(() => crmDocuments.id, { onDelete: "cascade" }),
+    requestedBy: text("requested_by").notNull().references(() => users.id, { onDelete: "restrict" }),
+    status: text("status").notNull().default("pending"),
+    language: text("language").notNull().default("eng"),
+    attempt: integer("attempt").notNull().default(0),
+    correlationId: text("correlation_id").notNull(),
+    error: text("error").notNull().default(""),
+    startedAt: timestamp("started_at", { withTimezone: true, mode: "string" }),
+    finishedAt: timestamp("finished_at", { withTimezone: true, mode: "string" }),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    index("idx_ocr_jobs_queue").on(table.status, table.createdAt),
+    index("idx_ocr_jobs_document").on(table.tenantId, table.documentId, table.createdAt),
+  ],
+);
+
+export const crmOcrResults = pgTable(
+  "crm_ocr_results",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    documentId: text("document_id").notNull().references(() => crmDocuments.id, { onDelete: "cascade" }),
+    jobId: text("job_id").notNull().references(() => crmOcrJobs.id, { onDelete: "cascade" }),
+    engine: text("engine").notNull(),
+    extractedText: text("extracted_text").notNull(),
+    correctedText: text("corrected_text").notNull().default(""),
+    pageCount: integer("page_count").notNull().default(1),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("idx_ocr_results_job").on(table.jobId),
+    index("idx_ocr_results_document").on(table.tenantId, table.documentId, table.createdAt),
+  ],
+);
+
 export const crmNotifications = pgTable(
   "crm_notifications",
   {
