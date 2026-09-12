@@ -51,7 +51,7 @@ expect 200 -b "$ADMIN_COOKIE" "$BASE/api/session"
 [[ "$(jq -r '.user.role' "$BODY")" == admin && "$(jq -r '.user.tenantId' "$BODY")" == default ]]
 
 # Objet configurable et totalité des types de champs v0.3.
-OBJECT_DEFINITION='{"key":"asset_v03","label":"Actif v0.3","fields":[{"key":"serial","label":"Série","type":"text","required":true,"minLength":7,"maxLength":7,"pattern":"^[A-Z]{3}-[0-9]{3}$"},{"key":"description","label":"Description","type":"textarea","maxLength":500},{"key":"quantity","label":"Quantité","type":"number","min":0,"max":100},{"key":"value","label":"Valeur","type":"currency","min":0},{"key":"enabled","label":"Actif","type":"boolean"},{"key":"acquired","label":"Acquisition","type":"date"},{"key":"inspectedAt","label":"Inspection","type":"datetime"},{"key":"state","label":"État","type":"select","options":["new","used"]}]}'
+OBJECT_DEFINITION='{"key":"asset_v03","label":"Actif v0.3","fields":[{"key":"serial","label":"Série","type":"text","required":true,"minLength":7,"maxLength":7,"pattern":"^[A-Z]{3}-[0-9]{3}$"},{"key":"description","label":"Description","type":"textarea","maxLength":500},{"key":"quantity","label":"Quantité","type":"number","min":0,"max":100},{"key":"value","label":"Valeur","type":"currency","min":0},{"key":"enabled","label":"Actif","type":"boolean"},{"key":"acquired","label":"Acquisition","type":"date"},{"key":"inspected_at","label":"Inspection","type":"datetime"},{"key":"state","label":"État","type":"select","options":["new","used"]}]}'
 expect 201 -b "$ADMIN_COOKIE" -H 'content-type: application/json' -d "$(jq -nc --argjson definition "$OBJECT_DEFINITION" '{kind:"object",name:"Actif v0.3",definition:$definition}')" "$BASE/api/configurations"
 OBJECT_CONFIG_ID="$(json_id)"
 [[ "$(jq -r '.item.version' "$BODY")" == 1 ]]
@@ -62,11 +62,11 @@ PIPELINE_CONFIG_ID="$(json_id)"
 expect 201 -b "$ADMIN_COOKIE" -H 'content-type: application/json' -d '{"kind":"pipeline","name":"Maintenance actif","definition":{"key":"asset_service_v03","objectType":"asset_v03","stages":[{"key":"queued","label":"À traiter"},{"key":"done","label":"Terminé"}]}}' "$BASE/api/configurations"
 
 # Formulaire ordonné, requis et écriture réelle dans le moteur CRM.
-expect 201 -b "$ADMIN_COOKIE" -H 'content-type: application/json' -d '{"kind":"form","name":"Formulaire actif","definition":{"key":"asset_form_v03","objectType":"asset_v03","fields":[{"key":"title","required":true},{"key":"serial","required":true},{"key":"description"},{"key":"quantity"},{"key":"value"},{"key":"enabled"},{"key":"acquired"},{"key":"inspectedAt"},{"key":"state"}]}}' "$BASE/api/configurations"
+expect 201 -b "$ADMIN_COOKIE" -H 'content-type: application/json' -d '{"kind":"form","name":"Formulaire actif","definition":{"key":"asset_form_v03","objectType":"asset_v03","fields":[{"key":"title","required":true},{"key":"serial","required":true},{"key":"description"},{"key":"quantity"},{"key":"value"},{"key":"enabled"},{"key":"acquired"},{"key":"inspected_at"},{"key":"state"}]}}' "$BASE/api/configurations"
 expect 200 -b "$ADMIN_COOKIE" "$BASE/api/forms?key=asset_form_v03"
-node -e 'const x=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); const k=x.item?.definition?.fields?.map(f=>f.key).join(","); if(k!=="title,serial,description,quantity,value,enabled,acquired,inspectedAt,state") process.exit(1)' "$BODY"
+node -e 'const x=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); const k=x.item?.definition?.fields?.map(f=>f.key).join(","); if(k!=="title,serial,description,quantity,value,enabled,acquired,inspected_at,state") process.exit(1)' "$BODY"
 
-FORM_VALUES='{"title":"Actif principal","serial":"ABC-123","description":"Créé par formulaire","quantity":2,"value":1250.5,"enabled":true,"acquired":"2026-09-12","inspectedAt":"2026-09-12T10:00:00Z","state":"new"}'
+FORM_VALUES='{"title":"Actif principal","serial":"ABC-123","description":"Créé par formulaire","quantity":2,"value":1250.5,"enabled":true,"acquired":"2026-09-12","inspected_at":"2026-09-12T10:00:00Z","state":"new"}'
 expect 201 -b "$ADMIN_COOKIE" -H 'content-type: application/json' -d "$(jq -nc --argjson values "$FORM_VALUES" '{key:"asset_form_v03",values:$values}')" "$BASE/api/forms"
 ASSET_ID="$(json_id)"
 node -e 'const x=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); const d=x.item?.data; if(d?.serial!=="ABC-123"||d?.quantity!==2||d?.value!==1250.5||d?.enabled!==true||d?.state!=="new") process.exit(1)' "$BODY"
