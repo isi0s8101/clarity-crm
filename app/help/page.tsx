@@ -5,7 +5,7 @@ import { helpCatalog } from "@/lib/help/catalog.js";
 import type { HelpProcedure } from "@/lib/help/types";
 import { getHelpContext } from "./help-page-utils";
 
-export { dynamic } from "./help-page-utils";
+export const dynamic = "force-dynamic";
 
 export default async function HelpPage() {
   const context = await getHelpContext("dashboard");

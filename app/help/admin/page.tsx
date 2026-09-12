@@ -6,7 +6,7 @@ import { filterProcedures } from "@/lib/help/resolver.js";
 import type { HelpProcedure } from "@/lib/help/types";
 import { getHelpContext } from "../help-page-utils";
 
-export { dynamic } from "../help-page-utils";
+export const dynamic = "force-dynamic";
 
 export default async function HelpAdminPage() {
   const context = await getHelpContext("config");

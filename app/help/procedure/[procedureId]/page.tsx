@@ -8,7 +8,7 @@ import { getProcedure, procedureVisibleForContext } from "@/lib/help/resolver.js
 import type { HelpProcedure } from "@/lib/help/types";
 import { getHelpContext } from "../../help-page-utils";
 
-export { dynamic } from "../../help-page-utils";
+export const dynamic = "force-dynamic";
 
 export default async function HelpProcedurePage({ params }: { params: Promise<{ procedureId: string }> | { procedureId: string } }) {
   const resolved = await Promise.resolve(params);
