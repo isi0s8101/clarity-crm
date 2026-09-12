@@ -33,10 +33,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     assertOcrEligible(document);
     const body = await request.json().catch(() => ({})) as Record<string, unknown>;
     const language = validateOcrLanguage(body.language ?? "eng");
-    const existingCount = (await getDb().select({ id: crmOcrJobs.id }).from(crmOcrJobs).where(and(
+    const previousJobs = await getDb().select({ id: crmOcrJobs.id, status: crmOcrJobs.status }).from(crmOcrJobs).where(and(
       eq(crmOcrJobs.tenantId, actor.tenantId), eq(crmOcrJobs.documentId, document.id),
-    )).limit(3)).length;
-    if (existingCount >= 2) return NextResponse.json({ error: "Nombre maximal de tentatives OCR atteint." }, { status: 409 });
+    )).orderBy(desc(crmOcrJobs.createdAt)).limit(3);
+    if (previousJobs.length >= 2) return NextResponse.json({ error: "Nombre maximal de tentatives OCR atteint." }, { status: 409 });
+    if (previousJobs.length && body.retry !== true) return NextResponse.json({ error: "Une nouvelle tentative OCR doit être demandée explicitement." }, { status: 409 });
+    if (previousJobs.length && previousJobs[0]?.status !== "failed") return NextResponse.json({ error: "Le dernier essai OCR n'est pas en échec." }, { status: 409 });
     const pending = (await getDb().insert(crmOcrJobs).values({
       id: crypto.randomUUID(), tenantId: actor.tenantId, documentId: document.id, requestedBy: actor.userId,
       language, correlationId: crypto.randomUUID(),

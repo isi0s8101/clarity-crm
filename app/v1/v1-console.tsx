@@ -567,7 +567,7 @@ export function V1Console({ user }: { user: { email: string; displayName: string
   const runOcr = async (id: string, language: "eng" | "fra") => {
     setBusy(true);
     try {
-      await request(`/api/documents/${encodeURIComponent(id)}/ocr`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ language }) });
+      await request(`/api/documents/${encodeURIComponent(id)}/ocr`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ language, retry: ocrHistory[id]?.jobs[0]?.status === "failed" }) });
       await loadOcrHistory(id);
       setMessage("OCR local exécuté et historisé.");
     } catch (error) { setMessage(errorMessage(error)); } finally { setBusy(false); }
