@@ -227,7 +227,19 @@ export function assertSameOriginMutation(request: { headers: Headers; nextUrl: U
   } catch {
     throw new NativeAuthError("Origine de requête refusée.", 403);
   }
-  if (parsed.origin !== request.nextUrl.origin) {
+  const host = request.headers.get("host");
+  if (!host) {
+    throw new NativeAuthError("Origine de requête refusée.", 403);
+  }
+
+  let expectedOrigin: string;
+  try {
+    expectedOrigin = new URL(`${request.nextUrl.protocol}//${host}`).origin;
+  } catch {
+    throw new NativeAuthError("Origine de requête refusée.", 403);
+  }
+
+  if (parsed.origin !== expectedOrigin) {
     throw new NativeAuthError("Origine de requête refusée.", 403);
   }
 }
