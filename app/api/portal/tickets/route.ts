@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { authErrorResponse, requirePermission, resolveAuthContext } from "@/lib/authz";
+import { audit, authErrorResponse, requirePermission, resolveAuthContext } from "@/lib/authz";
 import { assertSameOriginMutation } from "@/lib/native-auth";
 import { createPortalTicket, getPortalTicket, listPortalTickets, TicketingError, updatePortalTicket } from "@/lib/v11-ticketing";
 
@@ -26,13 +26,20 @@ export async function POST(request: NextRequest) {
     const actor = await resolveAuthContext(request);
     await requirePermission(actor, "portal", "create");
     const body = await request.json() as Record<string, unknown>;
-    const item = await createPortalTicket(actor, {
+    const created = await createPortalTicket(actor, {
       title: String(body.title ?? ""),
       description: String(body.description ?? ""),
       priority: typeof body.priority === "string" ? body.priority : undefined,
       category: typeof body.category === "string" ? body.category : undefined,
     });
-    return NextResponse.json({ item: await getPortalTicket(actor, item.id) }, { status: 201 });
+    await audit(actor, {
+      action: "portal.ticket.created",
+      resourceType: "ticket",
+      resourceId: created.id,
+      result: "success",
+      details: { ownerId: created.ownerId, category: created.data.category, priority: created.data.priority },
+    });
+    return NextResponse.json({ item: await getPortalTicket(actor, created.id) }, { status: 201 });
   } catch (error) {
     const authResponse = authErrorResponse(error);
     if (authResponse) return authResponse;
