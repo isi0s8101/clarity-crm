@@ -91,7 +91,10 @@ function AutomationOperations() {
   }, [status]);
 
   useEffect(() => {
-    void load().catch((error) => setMessage(errorMessage(error)));
+    const timer = window.setTimeout(() => {
+      void load().catch((error) => setMessage(errorMessage(error)));
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [load]);
 
   const inspect = async (jobId: string) => {
@@ -218,7 +221,10 @@ function WebhookOperations() {
   }, [status]);
 
   useEffect(() => {
-    void load().catch((error) => setMessage(errorMessage(error)));
+    const timer = window.setTimeout(() => {
+      void load().catch((error) => setMessage(errorMessage(error)));
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [load]);
 
   const inspectSecret = async (key: string) => {
