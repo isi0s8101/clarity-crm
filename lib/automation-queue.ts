@@ -110,6 +110,13 @@ export async function processAutomationJobs(options: { workerId?: string; limit?
   const workerId = options.workerId ?? "automation-" + process.pid;
   const limit = Math.max(1, Math.min(100, options.limit ?? 20));
   await recoverStaleAutomationJobs();
+  try {
+    const { enqueueDueIntegrationSyncJobs } = await import("@/lib/integration-scheduler");
+    await enqueueDueIntegrationSyncJobs(Math.min(limit, 20));
+  } catch (error) {
+    const message = error instanceof Error ? error.message.slice(0, 1000) : "Erreur scheduler inconnue.";
+    console.error(JSON.stringify({ level: "error", component: "integration-scheduler", error: message }));
+  }
   let processed = 0;
   while (processed < limit) {
     const job = await claimAutomationJob(workerId);
