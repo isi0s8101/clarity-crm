@@ -41,6 +41,10 @@ jobs:
           test -x scripts/ci-e2e-posix.sh
           test -x scripts/ci-e2e-v03-configuration-postgres.sh
           test -x scripts/ci-e2e-automation-queue-postgres.sh
+          test -f scripts/ci-e2e-v11-postgres.sh
+          test -f scripts/ci-upgrade-v03-to-v11-postgres.sh
+          test -f scripts/ci-e2e-v11-module-state.sh
+          test -f scripts/ci-e2e-v11-sla-reminder.sh
           test -x scripts/ci-backup-restore-postgres.sh
           test -x scripts/migrate-legacy-d1.mjs
           test -x scripts/ci-legacy-d1-migration.sh
@@ -51,6 +55,10 @@ jobs:
           bash -n scripts/ci-e2e-posix.sh
           bash -n scripts/ci-e2e-v03-configuration-postgres.sh
           bash -n scripts/ci-e2e-automation-queue-postgres.sh
+          bash -n scripts/ci-e2e-v11-postgres.sh
+          bash -n scripts/ci-upgrade-v03-to-v11-postgres.sh
+          bash -n scripts/ci-e2e-v11-module-state.sh
+          bash -n scripts/ci-e2e-v11-sla-reminder.sh
           bash -n scripts/ci-backup-restore-postgres.sh
           bash -n scripts/ci-legacy-d1-migration.sh
           bash -n scripts/upgrade-legacy-d1-posix.sh
@@ -62,6 +70,8 @@ jobs:
       - run: npm run build
         env:
           NODE_ENV: production
+      - name: Validate v0.3 to v1.1 PostgreSQL upgrade
+        run: bash scripts/ci-upgrade-v03-to-v11-postgres.sh
       - run: npm run db:migrate
       - run: npm run bootstrap:admin
       - run: bash scripts/ci-e2e-posix.sh
@@ -73,6 +83,59 @@ jobs:
           NODE_ENV: production
       - name: Validate PostgreSQL automation queue and webhooks
         run: bash scripts/ci-e2e-automation-queue-postgres.sh
+        env:
+          NODE_ENV: production
+      - name: Validate v1.1 template state restoration
+        run: bash scripts/ci-e2e-v11-module-state.sh
+        env:
+          NODE_ENV: production
+      - name: Validate v1.1 on PostgreSQL
+        run: |
+          PG17_BIN="$(mktemp -d)"
+          cat >"$PG17_BIN/pg_dump" <<'EOF'
+          #!/usr/bin/env bash
+          set -Eeuo pipefail
+          container="$(docker ps --format '{{.ID}} {{.Image}}' | awk '$2 ~ /^postgres:17([@:]|$)/ { print $1; exit }')"
+          [[ -n "$container" ]] || { echo "PostgreSQL 17 service container not found" >&2; exit 1; }
+          dump_file=""
+          args=()
+          while (( $# > 0 )); do
+            case "$1" in
+              --file=*) dump_file="${1#--file=}"; shift ;;
+              --file|-f) dump_file="${2:?dump file missing}"; shift 2 ;;
+              *) args+=("$1"); shift ;;
+            esac
+          done
+          if [[ -n "$dump_file" ]]; then
+            exec docker exec -i "$container" pg_dump "${args[@]}" >"$dump_file"
+          fi
+          exec docker exec -i "$container" pg_dump "${args[@]}"
+          EOF
+          cat >"$PG17_BIN/pg_restore" <<'EOF'
+          #!/usr/bin/env bash
+          set -Eeuo pipefail
+          container="$(docker ps --format '{{.ID}} {{.Image}}' | awk '$2 ~ /^postgres:17([@:]|$)/ { print $1; exit }')"
+          [[ -n "$container" ]] || { echo "PostgreSQL 17 service container not found" >&2; exit 1; }
+          if (( $# > 0 )); then
+            dump_file="${!#}"
+            if [[ -f "$dump_file" ]]; then
+              args=("${@:1:$#-1}")
+              exec docker exec -i "$container" pg_restore "${args[@]}" <"$dump_file"
+            fi
+          fi
+          exec docker exec -i "$container" pg_restore "$@"
+          EOF
+          chmod 0755 "$PG17_BIN/pg_dump" "$PG17_BIN/pg_restore"
+          export PATH="$PG17_BIN:$PATH"
+          bash -E -c '
+            trap '\''rc=$?; echo "[V1.1][ASSERT] line=$LINENO code=$rc" >&2'\'' ERR
+            source scripts/ci-e2e-v11-postgres.sh
+          '
+        env:
+          NODE_ENV: production
+          CLARITY_DOCUMENTS_DIR: /tmp/clarity-crm-v11-documents
+      - name: Validate v1.1 SLA reminders
+        run: bash scripts/ci-e2e-v11-sla-reminder.sh
         env:
           NODE_ENV: production
       - name: Validate legacy D1 to PostgreSQL migration

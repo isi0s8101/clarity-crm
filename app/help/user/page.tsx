@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { HelpProcedureCard } from "@/components/help/help-procedure-card";
-import { helpCatalog } from "@/lib/help/catalog.js";
+import { helpCatalog } from "@/lib/help/catalog-all.js";
 import { filterProcedures } from "@/lib/help/resolver.js";
 import type { HelpProcedure } from "@/lib/help/types";
 import { getHelpContext } from "../help-page-utils";

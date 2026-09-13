@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import { and, eq } from "drizzle-orm";
 
+import { getDb } from "@/db";
+import { crmConfigurations } from "@/db/schema";
 import { authErrorResponse, resolveAuthContext } from "@/lib/authz";
 import { listCrmRecords, crmErrorResponse } from "@/lib/crm-core";
-import { CORE_RECORD_TYPES } from "@/lib/crm-policy.js";
+import { CORE_RECORD_TYPES, normalizeRecordType } from "@/lib/crm-policy.js";
 
 export const runtime = "nodejs";
 
@@ -15,10 +18,25 @@ export async function GET(request: NextRequest) {
     }
     const requestedLimit = Number(request.nextUrl.searchParams.get("limit") ?? "50");
     const limit = Number.isInteger(requestedLimit) ? Math.min(100, Math.max(1, requestedLimit)) : 50;
-    const perType = Math.max(5, Math.ceil(limit / CORE_RECORD_TYPES.length) + 2);
+    const configuredRows = await getDb()
+      .select({ configKey: crmConfigurations.configKey })
+      .from(crmConfigurations)
+      .where(
+        and(
+          eq(crmConfigurations.tenantId, actor.tenantId),
+          eq(crmConfigurations.kind, "object"),
+          eq(crmConfigurations.active, 1),
+        ),
+      )
+      .limit(300);
+    const configuredTypes = configuredRows
+      .map((row) => normalizeRecordType(row.configKey))
+      .filter((type): type is string => Boolean(type));
+    const recordTypes = [...new Set([...CORE_RECORD_TYPES, ...configuredTypes])];
+    const perType = Math.max(5, Math.ceil(limit / Math.max(1, recordTypes.length)) + 2);
 
     const results = await Promise.all(
-      CORE_RECORD_TYPES.map(async (type) => {
+      recordTypes.map(async (type) => {
         try {
           return await listCrmRecords(actor, { type, q: q.slice(0, 80), limit: perType, offset: 0 });
         } catch {

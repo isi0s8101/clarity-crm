@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm";
 
 import { getDb } from "@/db";
 import { invitations, memberships, organizations } from "@/db/schema";
-import { authErrorResponse, readAuthenticatedIdentity } from "@/lib/authz";
+import { authErrorResponse, readAuthenticatedIdentity, type AuthRole } from "@/lib/authz";
 
 export const runtime = "nodejs";
 
@@ -42,7 +42,7 @@ export async function GET(request: NextRequest) {
       {
         tenantId: string;
         name: string;
-        role: "admin" | "user";
+        role: AuthRole;
         teamId: string | null;
         access: "membership" | "invitation";
         status: string;
@@ -53,7 +53,7 @@ export async function GET(request: NextRequest) {
       items.set(row.tenantId, {
         tenantId: row.tenantId,
         name: row.name,
-        role: row.role === "admin" ? "admin" : "user",
+        role: normalizeRole(row.role),
         teamId: row.teamId,
         access: "membership",
         status: row.status,
@@ -64,7 +64,7 @@ export async function GET(request: NextRequest) {
       items.set(row.tenantId, {
         tenantId: row.tenantId,
         name: row.name,
-        role: row.role === "admin" ? "admin" : "user",
+        role: normalizeRole(row.role),
         teamId: row.teamId,
         access: "invitation",
         status: row.status,
@@ -78,4 +78,10 @@ export async function GET(request: NextRequest) {
     console.error("tenants:list", error);
     return NextResponse.json({ error: "Organisations indisponibles." }, { status: 503 });
   }
+}
+
+function normalizeRole(role: string): AuthRole {
+  if (role === "admin") return "admin";
+  if (role === "client") return "client";
+  return "user";
 }

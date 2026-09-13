@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { HelpContext, HelpProcedure } from "@/lib/help/types";
-import { helpCatalog } from "@/lib/help/catalog.js";
+import { helpCatalog } from "@/lib/help/catalog-all.js";
 import { HelpContextRecommendations } from "./help-context-recommendations";
 import { HelpSearch } from "./help-search";
 import { HelpWizard } from "./help-wizard";

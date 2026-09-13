@@ -9,13 +9,14 @@ import { CORE_RECORD_TYPES } from "@/lib/crm-policy.js";
 import { assertSameOriginMutation } from "@/lib/native-auth";
 import { hashOpaqueToken, randomSessionToken } from "@/lib/auth-crypto.js";
 
-const roles = new Set(["admin", "user"]);
+const roles = new Set(["admin", "user", "client"]);
 const scopes = new Set(["personal", "team", "tenant"]);
 const actions = new Set(["read", "create", "update", "delete", "export", "administer"]);
 const objects = new Set([
   ...CORE_RECORD_TYPES,
   "crm_record", "crm_relation", "timeline", "crm_configuration",
   "automation", "module", "template", "webhook", "admin", "audit",
+  "portal", "inventory", "loyalty", "planning", "cpq",
 ]);
 const INVITATION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -180,6 +181,9 @@ export async function PATCH(request: NextRequest) {
       if (!role || !object || !action || !scope) return NextResponse.json({ error: "Permission invalide." }, { status: 400 });
       if (role === "user" && object === "admin") {
         return NextResponse.json({ error: "Le profil utilisateur ne peut pas administrer." }, { status: 400 });
+      }
+      if (role === "client" && (object !== "portal" || !["read", "create", "update"].includes(action) || scope !== "personal")) {
+        return NextResponse.json({ error: "Le rôle client est strictement limité au portail personnel." }, { status: 400 });
       }
       const id = `${actor.tenantId}:${role}:${object}:${action}`;
       const before = await db.select().from(rolePermissions).where(eq(rolePermissions.id, id)).limit(1);

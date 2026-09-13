@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { processAutomationJobs } from "@/lib/automation-queue";
+import { processSlaOperations } from "@/lib/v11-sla";
 
 export async function POST(request: NextRequest) {
   const expected = process.env.CLARITY_AUTOMATION_WORKER_TOKEN;
@@ -14,8 +15,11 @@ export async function POST(request: NextRequest) {
       ? body.workerId
       : undefined;
     const limit = typeof body.limit === "number" ? body.limit : undefined;
-    const processed = await processAutomationJobs({ workerId, limit });
-    return NextResponse.json({ processed });
+    const [automationProcessed, slaProcessed] = await Promise.all([
+      processAutomationJobs({ workerId, limit }),
+      processSlaOperations(limit),
+    ]);
+    return NextResponse.json({ processed: automationProcessed + slaProcessed, automationProcessed, slaProcessed });
   } catch (error) {
     console.error("automation-worker:process", error);
     return NextResponse.json({ error: "Worker d'automatisation indisponible." }, { status: 503 });

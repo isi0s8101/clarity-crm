@@ -1,6 +1,6 @@
 import type { PermissionAction, PermissionScope } from "@/lib/authz";
 
-export type HelpRole = "user" | "admin";
+export type HelpRole = "client" | "user" | "admin";
 
 export type HelpPermission = {
   object?: string;
