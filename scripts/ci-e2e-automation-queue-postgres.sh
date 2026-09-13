@@ -64,7 +64,8 @@ jq -e '.error and .code == "PAGINATION_INVALID"' "$BODY" >/dev/null || fail "pag
 # Le job persistant exécute le moteur historique une seule fois.
 expect 201 -b "$ADMIN_COOKIE" -H "content-type: application/json" -d '{"kind":"automation","name":"Queue E2E","definition":{"key":"queue_e2e","trigger":{"event":"record.created","type":"opportunity"},"conditions":[],"actions":[{"kind":"create_task","title":"Queue {{title}}"},{"kind":"timeline","summary":"Queue {{title}}"}]}}' "$BASE/api/configurations"
 expect 201 -b "$ADMIN_COOKIE" -H "content-type: application/json" -d '{"type":"opportunity","title":"Job durable","data":{"amountCents":1000,"probability":10,"stage":"qualification"}}' "$BASE/api/crm"
-wait_for "job succès" bash -c "curl -sS -b '$ADMIN_COOKIE' '$BASE/api/automations' | jq -e '.jobs | any(.status == \"success\")' >/dev/null"
+wait_for "tâche automatisée exacte" bash -c "curl -sS -b '$ADMIN_COOKIE' '$BASE/api/crm?type=task&q=Queue%20Job%20durable&limit=10&offset=0' | jq -e '[.items[] | select(.title == \"Queue Job durable\")] | length == 1' >/dev/null"
+sleep 0.4
 expect 200 -b "$ADMIN_COOKIE" "$BASE/api/crm?type=task&q=Queue%20Job%20durable&limit=10&offset=0"
 [[ "$(jq '[.items[] | select(.title == "Queue Job durable")] | length' "$BODY")" == 1 ]] || fail "idempotence tâche non respectée"
 
