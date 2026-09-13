@@ -42,43 +42,26 @@ export async function GET(request: NextRequest) {
     }
 
     const db = getDb();
-    const deliveryFilter = webhookId
-      ? status
-        ? direction
-          ? and(
-              eq(webhookDeliveries.tenantId, actor.tenantId),
-              eq(webhookDeliveries.webhookId, webhookId),
-              eq(webhookDeliveries.status, status),
-              eq(webhookDeliveries.direction, direction),
-            )
-          : and(
-              eq(webhookDeliveries.tenantId, actor.tenantId),
-              eq(webhookDeliveries.webhookId, webhookId),
-              eq(webhookDeliveries.status, status),
-            )
-        : direction
-          ? and(
-              eq(webhookDeliveries.tenantId, actor.tenantId),
-              eq(webhookDeliveries.webhookId, webhookId),
-              eq(webhookDeliveries.direction, direction),
-            )
-          : and(
-              eq(webhookDeliveries.tenantId, actor.tenantId),
-              eq(webhookDeliveries.webhookId, webhookId),
-            )
-      : status
-        ? direction
-          ? and(
-              eq(webhookDeliveries.tenantId, actor.tenantId),
-              eq(webhookDeliveries.status, status),
-              eq(webhookDeliveries.direction, direction),
-            )
-          : and(eq(webhookDeliveries.tenantId, actor.tenantId), eq(webhookDeliveries.status, status))
-        : direction
-          ? and(eq(webhookDeliveries.tenantId, actor.tenantId), eq(webhookDeliveries.direction, direction))
-          : eq(webhookDeliveries.tenantId, actor.tenantId);
+    const parameters: unknown[] = [actor.tenantId];
+    const filters = ["tenant_id=$1"];
+    if (status) {
+      parameters.push(status);
+      filters.push(`status=$${parameters.length}`);
+    }
+    if (direction) {
+      parameters.push(direction);
+      filters.push(`direction=$${parameters.length}`);
+    }
+    if (webhookId) {
+      parameters.push(webhookId);
+      filters.push(`webhook_id=$${parameters.length}`);
+    }
+    parameters.push(limit);
+    const limitPosition = parameters.length;
+    parameters.push(offset);
+    const offsetPosition = parameters.length;
 
-    const [configs, deliveries, metricRows] = await Promise.all([
+    const [configs, deliveryRows, metricRows] = await Promise.all([
       db
         .select()
         .from(crmConfigurations)
@@ -90,13 +73,14 @@ export async function GET(request: NextRequest) {
         )
         .orderBy(desc(crmConfigurations.updatedAt))
         .limit(100),
-      db
-        .select()
-        .from(webhookDeliveries)
-        .where(deliveryFilter)
-        .orderBy(desc(webhookDeliveries.createdAt))
-        .limit(limit)
-        .offset(offset),
+      getPool().query(
+        `SELECT id, tenant_id AS "tenantId", webhook_id AS "webhookId", direction, event, status, `
+          + `request_body AS "requestBody", response_code AS "responseCode", response_body AS "responseBody", `
+          + `error, correlation_id AS "correlationId", job_id AS "jobId", created_at AS "createdAt" `
+          + `FROM webhook_deliveries WHERE ${filters.join(" AND ")} ORDER BY created_at DESC `
+          + `LIMIT $${limitPosition} OFFSET $${offsetPosition}`,
+        parameters,
+      ),
       getPool().query(
         "SELECT status, COUNT(*)::int AS count FROM webhook_deliveries WHERE tenant_id=$1 GROUP BY status",
         [actor.tenantId],
@@ -108,9 +92,9 @@ export async function GET(request: NextRequest) {
         active: config.active === 1,
         definition: safeJson(config.definition),
       })),
-      deliveries: deliveries.map((delivery) => ({
+      deliveries: deliveryRows.rows.map((delivery) => ({
         ...delivery,
-        requestBody: safeJson(delivery.requestBody),
+        requestBody: safeJson(String(delivery.requestBody ?? "{}")),
       })),
       metrics: Object.fromEntries(
         metricRows.rows.map((row) => [String(row.status), Number(row.count)]),
