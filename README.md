@@ -1,64 +1,84 @@
-# Clarity CRM — fermeture `clarity-crm_v0.3`
+# Clarity CRM — fermeture `clarity-crm_v1.1`
 
-CRM professionnel modulaire conçu pour piloter les ventes, configurer les objets métier, automatiser les tâches et gouverner les accès sans complexité excessive.
+CRM professionnel modulaire sous PostgreSQL, conçu pour réutiliser un moteur CRM générique, une résolution tenant côté serveur, un RBAC par objet/action/scope, un audit unifié et un moteur d'automatisation persistant.
 
-Ce lot consolide exclusivement `clarity-crm_v0.3`. Le runtime POSIX de référence est PostgreSQL ; D1/Wrangler est conservé uniquement comme legacy d'import. La [matrice de traçabilité](docs/traceability-v1.0.md) relie chaque exigence à son code, son test et sa preuve.
+`clarity-crm_v1.1` étend strictement le `main` v0.3 validé. Aucun moteur CRM, calendrier, système d'authentification, queue ou stockage documentaire parallèle n'est introduit. La matrice de fermeture v1.1 est dans [`docs/traceability-v1.1.md`](docs/traceability-v1.1.md) ; la traçabilité historique v0.3 reste dans [`docs/traceability-v1.0.md`](docs/traceability-v1.0.md).
 
 ## Runtime cible
 
-Le runtime de référence est une application Next.js/Vinext sous Node.js 22+ avec PostgreSQL comme base de données applicative. Cloudflare D1 n'est plus le socle runtime POSIX : il est conservé uniquement comme héritage de versions précédentes et comme source d'import contrôlée vers PostgreSQL.
+Le runtime de référence est Next.js sous Node.js 22+ avec PostgreSQL 17 comme base applicative. D1/Wrangler est conservé uniquement pour l'import legacy contrôlé.
 
-## Base de données
+- schéma applicatif : `db/schema.ts` ;
+- migrations de production : `postgres/migrations/*.sql` ;
+- migrations : `npm run db:migrate` ;
+- bootstrap initial : `npm run bootstrap:admin` ;
+- déploiement Debian/POSIX : `sudo ./scripts/deploy-posix-vm.sh install` ;
+- import legacy D1 : `npm run db:migrate:legacy -- --source-root <chemin_d1>`.
 
-- Production/POSIX : `db/schema.ts` décrit le modèle applicatif et `postgres/migrations/*.sql` est la chaîne de migrations utilisée en exploitation.
-- Application des migrations PostgreSQL : `npm run db:migrate`.
-- Bootstrap initial contrôlé : `npm run bootstrap:admin`.
-- Déploiement Debian/POSIX complet : `sudo ./scripts/deploy-posix-vm.sh install`.
-- Migration legacy D1 : `npm run db:migrate:legacy -- --source-root <chemin_d1>` importe une ancienne base D1 vers PostgreSQL. Ce script ne sert pas à initialiser une base neuve.
-- Migrations D1 historiques : `legacy/d1/drizzle/` garde l'historique SQLite/D1 pour vérification et import. Ce répertoire n'est pas la source de vérité du runtime PostgreSQL.
-- `drizzle.config.ts` sert à générer les artefacts PostgreSQL depuis `db/schema.ts` vers `postgres/generated`. Les migrations réellement appliquées en production restent celles de `postgres/migrations`.
+Les migrations PostgreSQL sont appliquées séquentiellement avec checksum. La migration v1.1 `0008_v11_operations.sql` est additive et une recette CI reproduit explicitement un upgrade d'une base arrêtée à `0007` vers `0008` en contrôlant la conservation des données existantes.
 
-## Baseline technique de départ
+## Fondations conservées
 
-Le commit `1a5d73ccdecc9789b653fbf294d1fd6d52bf0b6b`, conservé par la référence distante `baseline-technique-depart-v0.3-20260913`, est le point de départ reproductible de cette fermeture. Cette référence ne désigne pas une version v0.3 fermée.
+La v1.1 réutilise sans reconstruction :
 
-Fonctions réellement validées :
+- authentification native et sessions ;
+- organisations/tenants, memberships, invitations et sélection tenant côté serveur ;
+- équipes ;
+- profils `admin`, `user` et, pour le portail, `client` à moindre privilège ;
+- RBAC serveur par objet, action et scope `personal`, `team`, `tenant` ;
+- moteur CRM générique `crm_records`, relations et timeline ;
+- configurations versionnées, modules et templates ;
+- automatisations, queue PostgreSQL et worker existant ;
+- notifications et audit ;
+- stockage documentaire POSIX ;
+- webhooks et protections SSRF existantes.
 
-- authentification obligatoire via session native ;
-- bootstrap initial contrôlé du premier administrateur ;
-- invitation obligatoire pour tout nouvel accès après bootstrap ;
-- plusieurs organisations/tenants avec memberships et invitations séparées ;
-- sélection explicite du tenant lorsqu'un utilisateur possède plusieurs accès ;
-- endpoint de liste limité aux organisations accessibles par l'identité ;
-- sélection persistée par cookie HttpOnly, revalidée côté serveur à chaque résolution de contexte ;
-- refus d'un tenant arbitraire fourni par le client ;
-- équipes et validation de cohérence équipe/tenant ;
-- profils `admin` et `user` ;
-- RBAC serveur par objet, action et scope ;
-- scopes `personal`, `team`, `tenant` ;
-- opportunités et records CRM filtrés par tenant et scope ;
-- audit tenant-aware avec scopes personnel, équipe et tenant appliqués côté SQL ;
-- utilisateurs actifs/désactivés ;
-- administration protégée des membres, équipes, invitations et permissions ;
-- migrations PostgreSQL POSIX appliquées séquentiellement avec checksum ;
-- import legacy D1 vers PostgreSQL transactionnel et fail-closed ;
-- CI Node 22 avec installation, lint, tests, typecheck, build, migrations PostgreSQL, recette POSIX et recette d'import D1.
+## Fonctionnalités v1.1
 
-La matrice détaillée est maintenue dans `docs/traceability-v1.0.md`.
+### Modules et templates
 
-La baseline de départ est documentée dans [`docs/baseline-v03-20260913.md`](docs/baseline-v03-20260913.md). Le moteur configurable fermé est décrit dans [`docs/configuration-engine-v0.3.md`](docs/configuration-engine-v0.3.md).
+Le catalogue intégré conserve `services`, `appointments` et `field-service` et ajoute les lots v1.1. L'installation vérifie les prérequis et conflits, est idempotente et auditée. Le rollback est non destructif : il refuse de désactiver une configuration encore utilisée et restaure l'état antérieur d'une configuration préexistante inactive.
 
-Dette connue non bloquante pour le cœur CRM :
+### Tickets, SAV et SLA
 
-- le provisioning administratif complet des organisations (création/renommage/archivage) n'est pas encore exposé tant que sa politique n'est pas spécifiée.
+Les tickets restent des enregistrements CRM configurés. Les workflows support et SAV sont distincts. Les échéances SLA, rappels avant échéance et escalades après dépassement sont traités par le worker automation existant ; les événements utilisent notifications, timeline, audit et queue existants.
 
-## État fonctionnel actuel
+### Portail client
 
-Le moteur CRM universel, les objets et champs personnalisés, les formulaires, pipelines multiples, relations configurables, automatisations, modules, templates et webhooks utilisent les mêmes API persistantes PostgreSQL. La racine `/` expose la console branchée aux API réelles ; l'ancien cockpit UX de démonstration n'est plus la route principale.
+Le rôle `client` réutilise authentification, memberships et RBAC. Il n'accède pas au CRM générique. Le portail expose uniquement les tickets dont l'utilisateur est demandeur et les documents explicitement marqués comme visibles. Les recettes testent les tentatives IDOR/BOLA entre deux clients du même tenant.
 
-Les documents binaires POSIX, les notifications internes, l'import CSV contrôlé, les exports CSV/XLSX et le dashboard calculé depuis les données accessibles sont validés par les recettes CI PostgreSQL.
+### Projets, chantiers, interventions et planning
 
-Les webhooks sortants sont soumis à une politique anti-SSRF avec HTTPS public, allowlist optionnelle, résolution DNS juste avant envoi, blocage des adresses privées/réservées et lecture bornée des réponses.
+`project` et `intervention` sont étendus via les configurations existantes ; `worksite` est ajouté comme objet configuré. Les relations projet → chantier → intervention utilisent `crm_relations`. La vue planning agrège les objets existants ; aucun second calendrier n'est créé.
+
+### Stock
+
+Les produits restent des records CRM. Les soldes et mouvements nécessitant des invariants transactionnels utilisent les tables v1.1 dédiées. Les mouvements sont historisés et idempotents ; les sorties utilisent un verrou PostgreSQL et refusent un stock négatif. Une recette de concurrence prouve qu'une seule des deux sorties concurrentes sur la dernière unité peut réussir.
+
+### Abonnements, CPQ et fidélité
+
+Les abonnements restent des objets CRM génériques et peuvent déclencher les automatisations existantes. Le CPQ relit les prix produits/services côté serveur avant de créer un devis et ignore les prix arbitraires transmis par le client. La fidélité utilise un ledger transactionnel et idempotent pour protéger le solde.
+
+### Centre d'aide
+
+Le centre d'aide existant est étendu avec les procédures v1.1 pour utilisateurs, administrateurs et clients du portail. Son filtrage continue de dépendre du rôle et des permissions réelles du tenant courant.
+
+## Validation CI
+
+`verify-posix` exige :
+
+- lint, tests unitaires, TypeScript et build ;
+- migration réelle PostgreSQL `0007 → 0008` ;
+- migrations/bootstrap courants ;
+- recettes POSIX et v0.3 historiques ;
+- queue automation et webhooks PostgreSQL ;
+- restauration d'état des templates v1.1 ;
+- recette E2E PostgreSQL v1.1 ;
+- rappel SLA avant échéance et escalade après dépassement ;
+- import legacy D1 ;
+- backup/restore PostgreSQL.
+
+Une v1.1 n'est considérée fermée que si cette chaîne est verte sur la PR puis sur le commit de fusion de `main`.
 
 ## Installation POSIX courte
 
@@ -70,7 +90,7 @@ cd clarity-crm
 sudo ./scripts/deploy-posix-vm.sh install
 ```
 
-Commandes applicatives utiles :
+Commandes utiles :
 
 ```bash
 npm run install:ci
@@ -91,34 +111,16 @@ npm run db:migrate:legacy -- --source-root .wrangler/state --apply
 
 ### clarity-crm_v0.1
 
-Fondations ajoutées :
-
-- authentification obligatoire via identité transmise par la plateforme ;
-- organisations, utilisateurs, équipes, appartenances, rôles et permissions persistants ;
-- isolation tenant côté serveur sur les opportunités ;
-- profils `admin` et `user` avec permissions par objet, action et périmètre ;
-- audit enrichi : acteur, tenant, action, ressource, résultat, avant/après ;
-- export CSV servi par API protégée.
+Fondations d'authentification, tenants, memberships, équipes, RBAC, audit et opportunités tenant-aware.
 
 ### clarity-crm_v0.2
 
-Administration réelle ajoutée :
-
-- API admin protégée pour membres, équipes, invitations et permissions ;
-- écran Droits & équipes branché sur les données persistantes ;
-- création d'équipe et invitation utilisateur auditables ;
-- modification de rôle/équipe avec garde-fou contre l'auto-rétrogradation admin ;
-- modification de périmètre de permission avec refus d'administration pour le profil utilisateur ;
-- migration legacy D1 additive pour les invitations.
+Administration des membres, équipes, invitations et permissions persistantes.
 
 ### clarity-crm_v0.3
 
-Fermeture du moteur configurable :
+Fermeture du moteur configurable : objets/champs personnalisés, formulaires, pipelines multiples, relations configurables, versionnement/restauration, intégrité cross-tenant PostgreSQL, automatisations et exploitation API/webhooks.
 
-- objets et champs personnalisés validés côté serveur ;
-- formulaires ordonnés écrivant dans le moteur CRM générique ;
-- plusieurs pipelines par objet et validation des étapes ;
-- relations configurables source/cible/cardinalité dans le moteur existant ;
-- versionnement atomique et restauration créant une nouvelle version ;
-- intégrité cross-tenant PostgreSQL renforcée par contraintes composites ;
-- recette E2E PostgreSQL de fermeture et matrice de traçabilité actualisée.
+### clarity-crm_v1.1
+
+Fermeture des briques métier réutilisables : cycle modules/templates, tickets/SAV/SLA, portail client, projets/chantiers/interventions/planning, stock, abonnements, CPQ simple et fidélité. Aucune fonctionnalité v1.2+ n'est incluse dans ce lot.
