@@ -157,6 +157,8 @@ function inferResources(capabilities: unknown) {
   if (values.includes("calendar.read")) result.push("calendar");
   if (values.includes("contacts.read")) result.push("contacts");
   if (values.includes("files.read")) result.push("files");
+  if (values.includes("directory.users.read")) result.push("directory.users");
+  if (values.includes("directory.groups.read")) result.push("directory.groups");
   return result;
 }
 function actorFromRow(row: Record<string, unknown>): AuthContext | null {
