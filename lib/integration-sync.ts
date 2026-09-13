@@ -6,6 +6,11 @@ import {
   requireIntegrationSyncPermission,
   type IntegrationConnectionView,
 } from "@/lib/integration-manager";
+import {
+  IntegrationNormalizationError,
+  normalizeIntegrationPullItem,
+  type ExistingIntegrationTarget,
+} from "@/lib/integration-normalizer";
 import { ConnectorError } from "@/lib/integrations/connector";
 import { getIntegrationConnector } from "@/lib/integrations/registry";
 
@@ -96,9 +101,9 @@ export async function executeIntegrationSyncJob(
   const connection = await getIntegrationConnection(actor, descriptor.connectionId);
   const connector = getIntegrationConnector(connection.provider);
   const run = await getRun(actor.tenantId, descriptor.runId, descriptor.connectionId);
-  if (run.status === "success") return;
+  if (run.status === "success" || run.status === "partial") return;
   if (["disabled", "revoked"].includes(connection.status)) {
-    await failRun(run.id, "connection_inactive", "Connexion inactive.", false, context.attempt);
+    await failRun(run.id, "connection_inactive", "Connexion inactive.", false, context.attempt, actor.tenantId);
     throw new IntegrationJobError("Connexion inactive.", { retryable: false });
   }
 
@@ -110,15 +115,17 @@ export async function executeIntegrationSyncJob(
 
   try {
     const runtime = await buildRuntimeContext(connection, context.correlationId, true);
+    let failed = 0;
     if (descriptor.direction === "pull") {
       if (!connector.pull) throw new ConnectorError("Lecture non prise en charge.", { code: "pull_unsupported" });
-      await executePull(connection, descriptor, connector.pull.bind(connector), runtime, run.cursorBefore);
+      const result = await executePull(actor, connection, descriptor, connector.pull.bind(connector), runtime, run.cursorBefore, context.correlationId);
+      failed = result.failed;
     } else {
       throw new ConnectorError("Push générique requiert une ressource explicitement sélectionnée.", { code: "push_payload_required" });
     }
     await getPool().query(
-      `UPDATE integration_sync_runs SET status='success',finished_at=CURRENT_TIMESTAMP,error_code='',error_message=''
-       WHERE tenant_id=$1 AND id=$2`, [actor.tenantId, run.id],
+      `UPDATE integration_sync_runs SET status=$1,finished_at=CURRENT_TIMESTAMP,error_code='',error_message=''
+       WHERE tenant_id=$2 AND id=$3`, [failed > 0 ? "partial" : "success", actor.tenantId, run.id],
     );
     await getPool().query(
       `UPDATE integration_connections SET status='connected',last_success_at=CURRENT_TIMESTAMP,last_error_code='',last_error_message='',updated_at=CURRENT_TIMESTAMP
@@ -137,15 +144,18 @@ export async function executeIntegrationSyncJob(
 }
 
 async function executePull(
+  actor: AuthContext,
   connection: IntegrationConnectionView,
   descriptor: IntegrationSyncDescriptor,
   pull: NonNullable<ReturnType<typeof getIntegrationConnector>["pull"]>,
   runtime: Awaited<ReturnType<typeof buildRuntimeContext>>,
   initialCursor: string,
+  correlationId: string,
 ) {
   let requestCursor = initialCursor || undefined;
   let durableCursor = initialCursor;
   let pageCount = 0;
+  let failedTotal = 0;
   const maxPages = envInteger("CLARITY_INTEGRATION_MAX_PAGES_PER_JOB", 100, 1, 1000);
   const seenExternalIds = new Set<string>();
 
@@ -156,39 +166,51 @@ async function executePull(
     let created = 0;
     let updated = 0;
     let skipped = 0;
+    let failed = 0;
     for (const item of page.items) {
       validatePullItem(item.externalId);
       if (seenExternalIds.has(item.externalId)) { skipped += 1; continue; }
       seenExternalIds.add(item.externalId);
       const existing = await getPool().query(
-        `SELECT id,external_version,external_etag FROM integration_resource_links
+        `SELECT id,external_version,external_etag,clarity_kind,clarity_id FROM integration_resource_links
          WHERE tenant_id=$1 AND connection_id=$2 AND resource_type=$3 AND external_id=$4 LIMIT 1`,
         [connection.tenantId, connection.id, descriptor.resourceType, item.externalId],
       );
-      if (existing.rows[0]
-        && String(existing.rows[0].external_version ?? "") === String(item.externalVersion ?? "")
-        && String(existing.rows[0].external_etag ?? "") === String(item.etag ?? "")) {
+      const row = existing.rows[0] as Record<string, unknown> | undefined;
+      if (row
+        && String(row.external_version ?? "") === String(item.externalVersion ?? "")
+        && String(row.external_etag ?? "") === String(item.etag ?? "")) {
         skipped += 1;
         await touchResourceLink(connection, descriptor.resourceType, item.externalId, item.deleted === true);
         continue;
       }
-      const target = extractClarityTarget(item.data);
-      if (!target) {
-        skipped += 1;
-        continue;
+      const existingTarget: ExistingIntegrationTarget = row
+        ? { kind: String(row.clarity_kind), id: String(row.clarity_id) }
+        : null;
+      try {
+        const target = await normalizeIntegrationPullItem(actor, connection, descriptor.resourceType, item, existingTarget);
+        if (!target) {
+          skipped += 1;
+          continue;
+        }
+        await upsertIntegrationResourceLink({
+          tenantId: connection.tenantId,
+          connectionId: connection.id,
+          resourceType: descriptor.resourceType,
+          externalId: item.externalId,
+          clarityKind: target.kind,
+          clarityId: target.id,
+          externalVersion: item.externalVersion ?? "",
+          externalEtag: item.etag ?? "",
+          externalDeleted: item.deleted === true,
+        });
+        if (target.created) created += 1; else updated += 1;
+      } catch (error) {
+        if (!(error instanceof IntegrationNormalizationError)) throw error;
+        failed += 1;
+        failedTotal += 1;
+        await recordNormalizationFailure(connection, descriptor.resourceType, error, correlationId);
       }
-      await upsertIntegrationResourceLink({
-        tenantId: connection.tenantId,
-        connectionId: connection.id,
-        resourceType: descriptor.resourceType,
-        externalId: item.externalId,
-        clarityKind: target.kind,
-        clarityId: target.id,
-        externalVersion: item.externalVersion ?? "",
-        externalEtag: item.etag ?? "",
-        externalDeleted: item.deleted === true,
-      });
-      if (existing.rows[0]) updated += 1; else created += 1;
     }
 
     if (page.checkpointCursor !== undefined) {
@@ -202,8 +224,8 @@ async function executePull(
       await client.query("BEGIN");
       await client.query(
         `UPDATE integration_sync_runs SET received=received+$1,created_count=created_count+$2,updated_count=updated_count+$3,
-         skipped_count=skipped_count+$4,cursor_after=$5 WHERE tenant_id=$6 AND id=$7`,
-        [page.items.length, created, updated, skipped, durableCursor, connection.tenantId, descriptor.runId],
+         skipped_count=skipped_count+$4,failed_count=failed_count+$5,cursor_after=$6 WHERE tenant_id=$7 AND id=$8`,
+        [page.items.length, created, updated, skipped, failed, durableCursor, connection.tenantId, descriptor.runId],
       );
       if (page.checkpointCursor !== undefined) {
         await client.query(
@@ -235,6 +257,7 @@ async function executePull(
       throw new ConnectorError("Curseur de pagination fournisseur absent ou invalide.", { code: "missing_continuation_cursor" });
     }
   }
+  return { failed: failedTotal };
 }
 
 export async function upsertIntegrationResourceLink(input: {
@@ -264,8 +287,7 @@ export async function upsertIntegrationResourceLink(input: {
 
 export async function getIntegrationSyncRun(actor: AuthContext, runId: string) {
   await requireIntegrationSyncPermission(actor);
-  const run = await getRun(actor.tenantId, runId);
-  return run;
+  return getRun(actor.tenantId, runId);
 }
 
 export function integrationSyncErrorResponse(error: unknown) {
@@ -310,10 +332,17 @@ async function touchResourceLink(connection: IntegrationConnectionView, resource
   );
 }
 
-function extractClarityTarget(data: Record<string, unknown>) {
-  const kind = typeof data.clarityKind === "string" ? data.clarityKind : "";
-  const id = typeof data.clarityId === "string" ? data.clarityId : "";
-  return RESOURCE_RE.test(kind) && id.length >= 1 && id.length <= 240 ? { kind, id } : null;
+async function recordNormalizationFailure(
+  connection: IntegrationConnectionView,
+  resourceType: string,
+  error: IntegrationNormalizationError,
+  correlationId: string,
+) {
+  await getPool().query(
+    `INSERT INTO integration_health_events(id,tenant_id,connection_id,severity,code,message,details,correlation_id)
+     VALUES ($1,$2,$3,'warning','normalization_failed',$4,$5::jsonb,$6)`,
+    [crypto.randomUUID(), connection.tenantId, connection.id, error.message.slice(0, 2000), JSON.stringify({ resourceType }), correlationId.slice(0, 120)],
+  );
 }
 
 async function failRun(runId: string, code: string, message: string, retryable: boolean, attempt: number, tenantId?: string) {
@@ -367,6 +396,9 @@ export class IntegrationJobError extends Error {
   readonly retryable: boolean;
   readonly retryAfterSeconds?: number;
   constructor(message: string, options: { retryable: boolean; retryAfterSeconds?: number }) {
-    super(message); this.name = "IntegrationJobError"; this.retryable = options.retryable; this.retryAfterSeconds = options.retryAfterSeconds;
+    super(message);
+    this.name = "IntegrationJobError";
+    this.retryable = options.retryable;
+    this.retryAfterSeconds = options.retryAfterSeconds;
   }
 }
