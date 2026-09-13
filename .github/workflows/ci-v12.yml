@@ -37,8 +37,10 @@ jobs:
         run: |
           test -f scripts/ci-upgrade-v11-to-v12-postgres.sh
           test -f scripts/ci-e2e-v12-postgres.sh
+          test -f scripts/ci-e2e-v12-config-rollback.sh
           bash -n scripts/ci-upgrade-v11-to-v12-postgres.sh
           bash -n scripts/ci-e2e-v12-postgres.sh
+          bash -n scripts/ci-e2e-v12-config-rollback.sh
       - run: npm ci
       - run: npm run lint
       - run: npm test
@@ -52,5 +54,9 @@ jobs:
       - run: npm run bootstrap:admin
       - name: Validate v1.2 proactive CRM on PostgreSQL
         run: bash scripts/ci-e2e-v12-postgres.sh
+        env:
+          NODE_ENV: production
+      - name: Validate v1.2 configuration history and rollback
+        run: bash scripts/ci-e2e-v12-config-rollback.sh
         env:
           NODE_ENV: production
