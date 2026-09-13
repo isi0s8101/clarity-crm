@@ -1,11 +1,7 @@
 import { getPool } from "@/db";
 import type { AuthContext } from "@/lib/authz";
 import { runAutomations, type AutomationEvent } from "@/lib/automation";
-import {
-  executeIntegrationSyncJob,
-  IntegrationJobError,
-  type IntegrationSyncDescriptor,
-} from "@/lib/integration-sync";
+import type { IntegrationSyncDescriptor } from "@/lib/integration-sync";
 import { refreshProactiveRecord, refreshProactiveSweep } from "@/lib/v12-intelligence";
 import { dispatchOutboundWebhooks, type WebhookEvent } from "@/lib/webhooks";
 
@@ -29,6 +25,12 @@ type QueueContext = {
   idempotencyKey?: string;
   mode?: "event" | "webhook_only";
   webhookId?: string;
+};
+
+type IntegrationJobFailure = Error & {
+  name: "IntegrationJobError";
+  retryable: boolean;
+  retryAfterSeconds?: number;
 };
 
 export async function enqueueAutomationJob(
@@ -169,6 +171,7 @@ async function processAutomationJob(job: Record<string, unknown>, workerId: stri
       if (payload.event !== "system.integration_sync" || !payload.integration) {
         throw new NonRetryableAutomationError("Job de synchronisation d'intégration incohérent.");
       }
+      const { executeIntegrationSyncJob } = await import("@/lib/integration-sync");
       await executeIntegrationSyncJob(payload.actor, payload.integration, {
         jobId,
         correlationId: String(job.correlation_id),
@@ -218,10 +221,11 @@ async function processAutomationJob(job: Record<string, unknown>, workerId: stri
     const message = error instanceof Error ? error.message.slice(0, 2000) : "Erreur worker inconnue.";
     const attempts = Number(job.attempts ?? 1);
     const maxAttempts = Number(job.max_attempts ?? 5);
-    const retry = error instanceof IntegrationJobError
-      ? error.retryable && attempts < maxAttempts
+    const integrationFailure = isIntegrationJobFailure(error) ? error : null;
+    const retry = integrationFailure
+      ? integrationFailure.retryable && attempts < maxAttempts
       : !(error instanceof NonRetryableAutomationError) && attempts < maxAttempts;
-    const requestedDelay = error instanceof IntegrationJobError ? error.retryAfterSeconds : undefined;
+    const requestedDelay = integrationFailure?.retryAfterSeconds;
     const delay = requestedDelay === undefined
       ? Math.min(3600, 5 * 2 ** Math.max(0, attempts - 1))
       : Math.min(86400, Math.max(1, requestedDelay));
@@ -258,6 +262,12 @@ function isIntegrationDescriptor(value: unknown): value is IntegrationSyncDescri
     && typeof item.connectionId === "string" && /^[A-Za-z0-9._:-]{1,120}$/.test(item.connectionId)
     && typeof item.resourceType === "string" && /^[a-z][a-z0-9._:-]{0,79}$/.test(item.resourceType)
     && (item.direction === "pull" || item.direction === "push");
+}
+function isIntegrationJobFailure(value: unknown): value is IntegrationJobFailure {
+  if (!(value instanceof Error) || value.name !== "IntegrationJobError") return false;
+  const candidate = value as Partial<IntegrationJobFailure>;
+  return typeof candidate.retryable === "boolean"
+    && (candidate.retryAfterSeconds === undefined || (Number.isInteger(candidate.retryAfterSeconds) && Number(candidate.retryAfterSeconds) >= 0));
 }
 function isAutomationEvent(event: QueuePayload["event"]): event is AutomationEvent {
   return event === "record.created" || event === "record.updated" || event === "record.archived"
