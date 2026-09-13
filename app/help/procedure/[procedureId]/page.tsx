@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 
 import { HelpPrerequisites } from "@/components/help/help-prerequisites";
 import { HelpWizard } from "@/components/help/help-wizard";
-import { helpCatalog } from "@/lib/help/catalog.js";
+import { helpCatalog } from "@/lib/help/catalog-all.js";
 import { getProcedure, procedureVisibleForContext } from "@/lib/help/resolver.js";
 import type { HelpProcedure } from "@/lib/help/types";
 import { getHelpContext } from "../../help-page-utils";
