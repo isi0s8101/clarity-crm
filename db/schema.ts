@@ -259,6 +259,47 @@ export const automationRuns = pgTable(
   (table) => [index("idx_automation_runs_tenant_created").on(table.tenantId, table.createdAt)],
 );
 
+export const automationJobs = pgTable(
+  "automation_jobs",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    automationId: text("automation_id").notNull().default(""),
+    event: text("event").notNull(),
+    payload: text("payload").notNull().default("{}"),
+    correlationId: text("correlation_id").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    status: text("status").notNull().default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(5),
+    availableAt: timestamp("available_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+    startedAt: timestamp("started_at", { withTimezone: true, mode: "string" }),
+    finishedAt: timestamp("finished_at", { withTimezone: true, mode: "string" }),
+    lockedAt: timestamp("locked_at", { withTimezone: true, mode: "string" }),
+    lockedBy: text("locked_by").notNull().default(""),
+    lastError: text("last_error").notNull().default(""),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    uniqueIndex("idx_automation_jobs_idempotency").on(table.tenantId, table.idempotencyKey),
+    index("idx_automation_jobs_available").on(table.status, table.availableAt, table.createdAt),
+    index("idx_automation_jobs_tenant_created").on(table.tenantId, table.createdAt),
+  ],
+);
+
+export const automationActionReceipts = pgTable(
+  "automation_action_receipts",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    jobId: text("job_id").notNull().references(() => automationJobs.id, { onDelete: "cascade" }),
+    automationId: text("automation_id").notNull(),
+    actionIndex: integer("action_index").notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [uniqueIndex("idx_automation_action_receipt").on(table.tenantId, table.jobId, table.automationId, table.actionIndex)],
+);
+
 export const crmDocuments = pgTable(
   "crm_documents",
   {

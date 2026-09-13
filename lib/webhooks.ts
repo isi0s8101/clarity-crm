@@ -22,6 +22,8 @@ export async function dispatchOutboundWebhooks(
   actor: AuthContext,
   event: WebhookEvent,
   record: RuntimeRecord,
+  correlationId = "",
+  jobId = "",
 ) {
   const db = getDb();
   const configs = await db
@@ -95,6 +97,8 @@ export async function dispatchOutboundWebhooks(
           "user-agent": "ClarityCRM-Webhook/1.0",
           "x-clarity-event": event,
           "x-clarity-delivery": deliveryId,
+          "x-clarity-correlation": correlationId,
+          "x-clarity-idempotency-key": jobId ? jobId + ":" + config.id : deliveryId,
           "x-clarity-signature": `sha256=${signature}`,
         },
         body: payload,
@@ -135,6 +139,7 @@ export async function dispatchAutomationWebhook(
   record: RuntimeRecord,
   url: string,
   correlationId: string,
+  jobId = "",
 ) {
   const deliveryId = crypto.randomUUID();
   const payload = JSON.stringify({
@@ -158,6 +163,7 @@ export async function dispatchAutomationWebhook(
           "content-type": "application/json", "user-agent": "ClarityCRM-Automation/1.0",
           "x-clarity-event": event, "x-clarity-delivery": deliveryId, "x-clarity-correlation": correlationId,
           "x-clarity-attempt": String(attempt), "x-clarity-signature": `sha256=${signature}`,
+          "x-clarity-idempotency-key": jobId ? jobId + ":" + automationId : deliveryId,
         },
         body: payload, timeoutMs: 5000, responseLimitBytes: 4096,
       });

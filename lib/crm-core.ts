@@ -11,7 +11,8 @@ import {
   requireRecordPermission,
   type AuthContext,
 } from "@/lib/authz";
-import { runAutomations, type AutomationEvent } from "@/lib/automation";
+import { enqueueAutomationJob } from "@/lib/automation-queue";
+import type { AutomationEvent } from "@/lib/automation";
 import {
   extractKnownRecordRefs,
   normalizeRecordType,
@@ -22,7 +23,6 @@ import {
   CrmConfigurationValidationError,
   validateConfiguredRecordData,
 } from "@/lib/crm-runtime-validation";
-import { dispatchOutboundWebhooks, type WebhookEvent } from "@/lib/webhooks";
 
 export type CrmRecord = {
   id: string;
@@ -183,10 +183,10 @@ export async function updateCrmRecord(actor: AuthContext, id: string, patch: Rec
   });
   await runSideEffects(actor, "record.updated", record);
   if (record.status !== existing.status) {
-    await runAutomations(actor, "record.status_changed", record);
+    await enqueueAutomationJob(actor, "record.status_changed", record);
   }
   if (record.data.stage !== existing.data.stage) {
-    await runAutomations(actor, "record.pipeline_changed", record);
+    await enqueueAutomationJob(actor, "record.pipeline_changed", record);
   }
   return record;
 }
@@ -261,11 +261,8 @@ async function assertReferencesBelongToTenant(tenantId: string, data: Record<str
   }
 }
 
-async function runSideEffects(actor: AuthContext, event: AutomationEvent & WebhookEvent, record: CrmRecord) {
-  await Promise.allSettled([
-    runAutomations(actor, event, record),
-    dispatchOutboundWebhooks(actor, event, record),
-  ]);
+async function runSideEffects(actor: AuthContext, event: Extract<AutomationEvent, "record.created" | "record.updated" | "record.archived">, record: CrmRecord) {
+  await enqueueAutomationJob(actor, event, record);
 }
 
 function decodeRecord(row: typeof crmRecords.$inferSelect): CrmRecord {

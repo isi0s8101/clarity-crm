@@ -11,6 +11,8 @@ readonly APP_PORT="${CLARITY_PORT:-5173}"
 readonly DB_NAME="${CLARITY_DB_NAME:-claritycrm}"
 readonly SERVICE_NAME="${CLARITY_SERVICE_NAME:-clarity-crm.service}"
 readonly UNIT_FILE="/etc/systemd/system/${SERVICE_NAME}"
+readonly WORKER_SERVICE_NAME="${CLARITY_AUTOMATION_WORKER_SERVICE_NAME:-clarity-crm-automation-worker.service}"
+readonly WORKER_UNIT_FILE="/etc/systemd/system/${WORKER_SERVICE_NAME}"
 readonly ENV_DIR="/etc/clarity-crm"
 readonly ENV_FILE="${ENV_DIR}/clarity-crm.env"
 readonly BACKUP_ROOT="${CLARITY_BACKUP_ROOT:-/var/backups/clarity-crm}"
@@ -123,6 +125,11 @@ SQL
 }
 
 write_environment() {
+  local worker_token="${CLARITY_AUTOMATION_WORKER_TOKEN:-}"
+  if [[ -z "$worker_token" && -r "$ENV_FILE" ]]; then
+    worker_token="$(sed -n 's/^CLARITY_AUTOMATION_WORKER_TOKEN=//p' "$ENV_FILE" | tail -n 1)"
+  fi
+  [[ "$worker_token" =~ ^[A-Za-z0-9_-]{32,}$ ]] || worker_token="$(openssl rand -hex 32)"
   install -d -m 0750 -o root -g "$APP_GROUP" "$ENV_DIR"
   cat > "$ENV_FILE" <<EOF
 NODE_ENV=production
@@ -133,6 +140,7 @@ CLARITY_COOKIE_SECURE=${CLARITY_COOKIE_SECURE:-0}
 CLARITY_TRUST_PROXY=${CLARITY_TRUST_PROXY:-0}
 CLARITY_DB_POOL_MAX=${CLARITY_DB_POOL_MAX:-10}
 CLARITY_SESSION_TTL_HOURS=${CLARITY_SESSION_TTL_HOURS:-12}
+CLARITY_AUTOMATION_WORKER_TOKEN=${worker_token}
 EOF
   chown root:"$APP_GROUP" "$ENV_FILE"
   chmod 0640 "$ENV_FILE"
@@ -271,8 +279,52 @@ WantedBy=multi-user.target
 EOF
   chmod 0644 "$UNIT_FILE"
   systemd-analyze verify "$UNIT_FILE"
+  cat > "$WORKER_UNIT_FILE" <<EOF
+[Unit]
+Description=Clarity CRM - automation worker
+After=${SERVICE_NAME} network-online.target postgresql.service
+Wants=network-online.target
+Requires=${SERVICE_NAME}
+
+[Service]
+Type=simple
+User=${APP_USER}
+Group=${APP_GROUP}
+WorkingDirectory=${APP_DIR}
+EnvironmentFile=${ENV_FILE}
+Environment=HOME=${APP_HOME}
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=CLARITY_INTERNAL_BASE_URL=http://127.0.0.1:${APP_PORT}
+ExecStart=/usr/bin/env node ${APP_DIR}/scripts/run-automation-worker.mjs
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=35
+KillSignal=SIGTERM
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=full
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+MemoryHigh=256M
+MemoryMax=512M
+TasksMax=128
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  chmod 0644 "$WORKER_UNIT_FILE"
+  systemd-analyze verify "$WORKER_UNIT_FILE"
   systemctl daemon-reload
-  systemctl enable "$SERVICE_NAME"
+  systemctl enable "$SERVICE_NAME" "$WORKER_SERVICE_NAME"
 }
 
 validate_runtime() {
@@ -286,6 +338,8 @@ validate_runtime() {
     sleep 1
   done
   [[ "$live" == 200 && "$ready" == 200 ]] || { journalctl -u "$SERVICE_NAME" -n 120 --no-pager >&2 || true; die "Healthcheck échoué live=$live ready=$ready"; }
+  systemctl restart "$WORKER_SERVICE_NAME"
+  systemctl is-active --quiet "$WORKER_SERVICE_NAME" || { journalctl -u "$WORKER_SERVICE_NAME" -n 100 --no-pager >&2 || true; die "Worker arrêté."; }
   ss -lnt 2>/dev/null | grep -Eq "127\\.0\\.0\\.1:${APP_PORT}([[:space:]]|$)" || die "Écoute loopback absente."
   local root_code
   root_code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 3 "http://127.0.0.1:${APP_PORT}/")"
@@ -302,6 +356,7 @@ show_status() {
   echo "PostgreSQL : $(run_app psql -X -Atqc 'SELECT current_database()' 2>/dev/null || echo indisponible)"
   echo "Web        : http://127.0.0.1:${APP_PORT}"
   systemctl --no-pager --full status "$SERVICE_NAME" 2>/dev/null || true
+  systemctl --no-pager --full status "$WORKER_SERVICE_NAME" 2>/dev/null || true
   curl -sS -o /dev/null -w 'live=%{http_code}\n' --max-time 3 "http://127.0.0.1:${APP_PORT}/api/health/live" || true
   curl -sS -o /dev/null -w 'ready=%{http_code}\n' --max-time 3 "http://127.0.0.1:${APP_PORT}/api/health/ready" || true
 }
@@ -313,6 +368,7 @@ rollback_latest() {
   sha="$(tr -d '\r\n' < "$backup/commit")"; branch="$(tr -d '\r\n' < "$backup/branch")"
   [[ "$sha" =~ ^[0-9a-fA-F]{40}$ ]] || die "SHA rollback invalide."
   systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+  systemctl stop "$WORKER_SERVICE_NAME" 2>/dev/null || true
   run_app git -C "$APP_DIR" reset --hard "$sha"
   run_app git -C "$APP_DIR" checkout "$branch"
   run_app pg_restore --clean --if-exists --no-owner --dbname="$DB_NAME" < "$backup/database.dump"

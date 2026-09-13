@@ -23,6 +23,9 @@ jobs:
       CLARITY_ADMIN_EMAIL: admin@clarity.test
       CLARITY_ADMIN_PASSWORD: CI-password-2026-strong
       CLARITY_COOKIE_SECURE: "0"
+      CLARITY_AUTOMATION_WORKER_TOKEN: clarity-ci-worker-token-0123456789abcdef
+      CLARITY_WEBHOOK_MASTER_SECRET: clarity-ci-master-secret-0123456789abcdef
+      CLARITY_WEBHOOK_ALLOW_PRIVATE_E2E: "1"
       PORT: "5173"
     steps:
       - uses: actions/checkout@v4
@@ -37,6 +40,7 @@ jobs:
           test -x scripts/bootstrap-admin.mjs
           test -x scripts/ci-e2e-posix.sh
           test -x scripts/ci-e2e-v03-configuration-postgres.sh
+          test -x scripts/ci-e2e-automation-queue-postgres.sh
           test -x scripts/ci-backup-restore-postgres.sh
           test -x scripts/migrate-legacy-d1.mjs
           test -x scripts/ci-legacy-d1-migration.sh
@@ -46,6 +50,7 @@ jobs:
           bash -n scripts/deploy-posix-vm.sh
           bash -n scripts/ci-e2e-posix.sh
           bash -n scripts/ci-e2e-v03-configuration-postgres.sh
+          bash -n scripts/ci-e2e-automation-queue-postgres.sh
           bash -n scripts/ci-backup-restore-postgres.sh
           bash -n scripts/ci-legacy-d1-migration.sh
           bash -n scripts/upgrade-legacy-d1-posix.sh
@@ -64,6 +69,10 @@ jobs:
           NODE_ENV: production
       - name: Validate v0.3 configurable engine on PostgreSQL
         run: bash scripts/ci-e2e-v03-configuration-postgres.sh
+        env:
+          NODE_ENV: production
+      - name: Validate PostgreSQL automation queue and webhooks
+        run: bash scripts/ci-e2e-automation-queue-postgres.sh
         env:
           NODE_ENV: production
       - name: Validate legacy D1 to PostgreSQL migration

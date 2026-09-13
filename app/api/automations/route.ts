@@ -2,14 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { and, desc, eq } from "drizzle-orm";
 
 import { getDb } from "@/db";
-import { automationRuns, crmConfigurations } from "@/db/schema";
+import { automationJobs, automationRuns, crmConfigurations } from "@/db/schema";
 import {
   audit,
   authErrorResponse,
   requirePermission,
   resolveAuthContext,
 } from "@/lib/authz";
-import { runAutomations, type AutomationEvent } from "@/lib/automation";
+import { enqueueAutomationJob } from "@/lib/automation-queue";
+import type { AutomationEvent } from "@/lib/automation";
 import { crmErrorResponse, getCrmRecord } from "@/lib/crm-core";
 import { assertSameOriginMutation } from "@/lib/native-auth";
 
@@ -26,7 +27,7 @@ export async function GET(request: NextRequest) {
     const actor = await resolveAuthContext(request);
     await requirePermission(actor, "automation", "read");
     const db = getDb();
-    const [configs, runs] = await Promise.all([
+    const [configs, runs, jobs] = await Promise.all([
       db
         .select()
         .from(crmConfigurations)
@@ -44,6 +45,12 @@ export async function GET(request: NextRequest) {
         .where(eq(automationRuns.tenantId, actor.tenantId))
         .orderBy(desc(automationRuns.createdAt))
         .limit(100),
+      db
+        .select()
+        .from(automationJobs)
+        .where(eq(automationJobs.tenantId, actor.tenantId))
+        .orderBy(desc(automationJobs.createdAt))
+        .limit(100),
     ]);
     return NextResponse.json({
       configurations: configs.map((config) => ({
@@ -56,6 +63,7 @@ export async function GET(request: NextRequest) {
         input: safeJson(run.input),
         output: safeJson(run.output),
       })),
+      jobs: jobs.map((job) => ({ ...job, payload: safeJson(job.payload) })),
     });
   } catch (error) {
     const authResponse = authErrorResponse(error);
@@ -77,7 +85,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Événement invalide." }, { status: 400 });
     }
     const record = await getCrmRecord(actor, recordId, "read");
-    await runAutomations(actor, event, record);
+    const queued = await enqueueAutomationJob(actor, event, record, {
+      idempotencyKey: "manual:" + actor.userId + ":" + event + ":" + record.id + ":" + crypto.randomUUID(),
+    });
     await audit(actor, {
       action: "automation.replayed",
       resourceType: record.type,
@@ -85,7 +95,7 @@ export async function POST(request: NextRequest) {
       result: "success",
       details: { event },
     });
-    return NextResponse.json({ executed: true });
+    return NextResponse.json({ queued: queued.queued, jobId: queued.id, correlationId: queued.correlationId }, { status: 202 });
   } catch (error) {
     const authResponse = authErrorResponse(error);
     if (authResponse) return authResponse;
