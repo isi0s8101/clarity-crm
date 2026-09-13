@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 
- type PortalTicket = {
+type PortalTicket = {
   id: string;
   title: string;
   status: string;
@@ -44,7 +44,10 @@ export function PortalClient() {
     }
   }, [request]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void load(); }, 0);
+    return () => window.clearTimeout(timer);
+  }, [load]);
 
   async function create(event: FormEvent) {
     event.preventDefault(); setBusy(true); setMessage("");
