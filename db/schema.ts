@@ -1,4 +1,5 @@
 import { foreignKey, index, integer, pgTable, serial, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 const createdAt = () => timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow();
 const updatedAt = () => timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow();
@@ -205,12 +206,14 @@ export const crmConfigurations = pgTable(
     version: integer("version").notNull().default(1),
     active: integer("active").notNull().default(1),
     definition: text("definition").notNull().default("{}"),
+    configKey: text("config_key").generatedAlwaysAs(sql`lower(btrim(definition::jsonb ->> 'key'))`).notNull(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (table) => [
     index("idx_crm_config_tenant_kind").on(table.tenantId, table.kind),
     uniqueIndex("idx_crm_config_tenant_id").on(table.tenantId, table.id),
+    uniqueIndex("idx_crm_config_tenant_kind_key").on(table.tenantId, table.kind, table.configKey),
   ],
 );
 

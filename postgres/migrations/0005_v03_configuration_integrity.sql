@@ -7,7 +7,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_crm_config_tenant_id
 
 ALTER TABLE crm_configurations
   ADD COLUMN config_key TEXT
-  GENERATED ALWAYS AS ((definition::jsonb ->> 'key')) STORED;
+  GENERATED ALWAYS AS (lower(btrim(definition::jsonb ->> 'key'))) STORED;
 
 ALTER TABLE crm_configurations
   ALTER COLUMN config_key SET NOT NULL;

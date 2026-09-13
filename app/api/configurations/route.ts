@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { and, desc, eq, gt } from "drizzle-orm";
+import { and, desc, eq, gt, ne, or, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 
 import { getDb } from "@/db";
 import {
@@ -114,6 +115,8 @@ export async function POST(request: NextRequest) {
     const webhookError = validateWebhookNetworkPolicy(kind, validation.value);
     if (webhookError) return NextResponse.json({ error: webhookError }, { status: 400 });
     await assertConfigurationReferences(actor.tenantId, kind, validation.value);
+    const active = body.active === false ? 0 : 1;
+    await assertConfigurationCompatible(actor.tenantId, kind, validation.value, active === 1, validation.value);
 
     const db = getDb();
     if (await configurationKeyExists(actor.tenantId, kind, validation.value)) {
@@ -121,7 +124,6 @@ export async function POST(request: NextRequest) {
     }
 
     const id = crypto.randomUUID();
-    const active = body.active === false ? 0 : 1;
     const inserted = await db.transaction(async (tx) => {
       const rows = await tx.insert(crmConfigurations).values({
         id,
@@ -283,6 +285,7 @@ async function applyTemplate(
     if (!validation.ok) throw new Error(validation.error);
     if (await configurationKeyExists(actor.tenantId, entry.kind, validation.value)) continue;
     await assertConfigurationReferences(actor.tenantId, entry.kind, validation.value);
+    await assertConfigurationCompatible(actor.tenantId, entry.kind, validation.value, true, validation.value);
     const inserted = await db.transaction(async (tx) => {
       const rows = await tx.insert(crmConfigurations).values({
         id: crypto.randomUUID(),
@@ -310,18 +313,15 @@ async function configurationKeyExists(
   if (typeof key !== "string") return false;
   const db = getDb();
   const rows = await db
-    .select({ definition: crmConfigurations.definition })
+    .select({ id: crmConfigurations.id })
     .from(crmConfigurations)
-    .where(and(eq(crmConfigurations.tenantId, tenantId), eq(crmConfigurations.kind, kind)))
-    .limit(300);
-  return rows.some((row) => {
-    try {
-      const parsed = JSON.parse(row.definition) as { key?: unknown };
-      return parsed.key === key;
-    } catch {
-      return false;
-    }
-  });
+    .where(and(
+      eq(crmConfigurations.tenantId, tenantId),
+      eq(crmConfigurations.kind, kind),
+      eq(crmConfigurations.configKey, key),
+    ))
+    .limit(1);
+  return Boolean(rows[0]);
 }
 
 async function findActiveDependentModule(tenantId: string, definition: Record<string, unknown>) {
@@ -493,12 +493,13 @@ async function findActiveConfigurationDefinition(tenantId: string, kind: string,
       eq(crmConfigurations.tenantId, tenantId),
       eq(crmConfigurations.kind, kind),
       eq(crmConfigurations.active, 1),
+      eq(crmConfigurations.configKey, key),
     ))
-    .limit(300);
+    .limit(1);
   for (const row of rows) {
     try {
       const definition = JSON.parse(row.definition) as Record<string, unknown>;
-      if (definition.key === key) return definition;
+      if (typeof definition.key === "string" && definition.key.trim().toLowerCase() === key) return definition;
     } catch {
       // Une configuration illisible ne satisfait jamais une dépendance.
     }
@@ -616,13 +617,61 @@ async function assertConfigurationCompatible(
   }
 
   if (kind === "relation") {
-    const existing = await getDb()
+    const db = getDb();
+    const existing = await db
       .select({ id: crmRelations.id })
       .from(crmRelations)
       .where(and(eq(crmRelations.tenantId, tenantId), eq(crmRelations.relationType, key)))
       .limit(1);
     if (existing[0] && !active) {
       throw new ConfigurationRequestError("Impossible de désactiver une relation encore utilisée.", 409);
+    }
+    if (active && existing[0]) {
+      const sourceRecord = alias(crmRecords, "configured_relation_source");
+      const targetRecord = alias(crmRecords, "configured_relation_target");
+      const invalidEndpoint = await db
+        .select({ id: crmRelations.id })
+        .from(crmRelations)
+        .innerJoin(sourceRecord, and(
+          eq(crmRelations.tenantId, sourceRecord.tenantId),
+          eq(crmRelations.fromRecordId, sourceRecord.id),
+        ))
+        .innerJoin(targetRecord, and(
+          eq(crmRelations.tenantId, targetRecord.tenantId),
+          eq(crmRelations.toRecordId, targetRecord.id),
+        ))
+        .where(and(
+          eq(crmRelations.tenantId, tenantId),
+          eq(crmRelations.relationType, key),
+          or(ne(sourceRecord.type, String(definition.sourceType)), ne(targetRecord.type, String(definition.targetType))),
+        ))
+        .limit(1);
+      if (invalidEndpoint[0]) {
+        throw new ConfigurationRequestError(`La relation existante ${invalidEndpoint[0].id} a des objets source ou cible incompatibles.`, 409);
+      }
+
+      const cardinality = definition.cardinality;
+      const duplicateSources = cardinality === "one_to_one" || cardinality === "many_to_one"
+        ? await db
+          .select({ recordId: crmRelations.fromRecordId })
+          .from(crmRelations)
+          .where(and(eq(crmRelations.tenantId, tenantId), eq(crmRelations.relationType, key)))
+          .groupBy(crmRelations.fromRecordId)
+          .having(sql`count(*) > 1`)
+          .limit(1)
+        : [];
+      const duplicateTargets = cardinality === "one_to_one" || cardinality === "one_to_many"
+        ? await db
+          .select({ recordId: crmRelations.toRecordId })
+          .from(crmRelations)
+          .where(and(eq(crmRelations.tenantId, tenantId), eq(crmRelations.relationType, key)))
+          .groupBy(crmRelations.toRecordId)
+          .having(sql`count(*) > 1`)
+          .limit(1)
+        : [];
+      if (duplicateSources[0] || duplicateTargets[0]) {
+        throw new ConfigurationRequestError("Les relations existantes dépassent la cardinalité configurée.", 409);
+      }
     }
     if (
       existing[0] &&

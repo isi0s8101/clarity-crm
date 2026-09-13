@@ -97,13 +97,26 @@ export async function POST(request: NextRequest) {
     const inserted = await db.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${actor.tenantId}), hashtext(${relationType}))`);
       if (configuredRelation && configuredRelation.cardinality !== "many_to_many") {
-        const candidates = await tx
-          .select({ fromRecordId: crmRelations.fromRecordId, toRecordId: crmRelations.toRecordId })
+        const checkSource = configuredRelation.cardinality === "one_to_one" || configuredRelation.cardinality === "many_to_one";
+        const checkTarget = configuredRelation.cardinality === "one_to_one" || configuredRelation.cardinality === "one_to_many";
+        const sourceAlreadyLinked = checkSource && Boolean((await tx
+          .select({ id: crmRelations.id })
           .from(crmRelations)
-          .where(and(eq(crmRelations.tenantId, actor.tenantId), eq(crmRelations.relationType, relationType)))
-          .limit(10000);
-        const sourceAlreadyLinked = candidates.some((relation) => relation.fromRecordId === fromId);
-        const targetAlreadyLinked = candidates.some((relation) => relation.toRecordId === toId);
+          .where(and(
+            eq(crmRelations.tenantId, actor.tenantId),
+            eq(crmRelations.relationType, relationType),
+            eq(crmRelations.fromRecordId, fromId),
+          ))
+          .limit(1))[0]);
+        const targetAlreadyLinked = checkTarget && Boolean((await tx
+          .select({ id: crmRelations.id })
+          .from(crmRelations)
+          .where(and(
+            eq(crmRelations.tenantId, actor.tenantId),
+            eq(crmRelations.relationType, relationType),
+            eq(crmRelations.toRecordId, toId),
+          ))
+          .limit(1))[0]);
         const violatesCardinality =
           (configuredRelation.cardinality === "one_to_one" && (sourceAlreadyLinked || targetAlreadyLinked)) ||
           (configuredRelation.cardinality === "one_to_many" && targetAlreadyLinked) ||

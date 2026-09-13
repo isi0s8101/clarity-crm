@@ -14,7 +14,7 @@ Les mutations passent par `/api/configurations`, l'authentification native, le t
 - `relation` : `key`, `sourceType`, `targetType`, `cardinality` parmi `one_to_one`, `one_to_many`, `many_to_one`, `many_to_many`.
 - les types historiques `automation`, `module`, `template` et `webhook` restent dans ce même moteur.
 
-Types de champs : `text`, `textarea`, `number`, `currency`, `boolean`, `date`, `datetime`, `select`, `email`, `phone`, `relation`. Les règles disponibles sont `required`, `min`, `max`, `minLength`, `maxLength`, `pattern`, `options` et, pour un champ relation, `targetType`.
+Types de champs : `text`, `textarea`, `number`, `currency`, `boolean`, `date`, `datetime`, `select`, `email`, `phone`, `relation`. Les règles disponibles sont `required`, `min`, `max`, `minLength`, `maxLength`, `pattern`, `options` et, pour un champ relation, `targetType`. Les motifs `pattern` doivent être ancrés (`^…$`) et n'acceptent que des répétitions bornées (`{n}` ou `{n,m}`, maximum 1000) ; groupes, alternatives, jokers et quantificateurs non bornés sont refusés pour protéger le runtime contre le backtracking catastrophique.
 
 ## Invariants
 

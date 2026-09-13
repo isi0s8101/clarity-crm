@@ -2,7 +2,7 @@ import { and, eq, inArray } from "drizzle-orm";
 
 import { getDb } from "@/db";
 import { crmConfigurations, crmRecords } from "@/db/schema";
-import { isCoreRecordType } from "@/lib/crm-policy.js";
+import { isCoreRecordType, isSafeConfiguredPattern } from "@/lib/crm-policy.js";
 
 export class CrmConfigurationValidationError extends Error {
   status = 400;
@@ -20,8 +20,12 @@ export async function getConfiguredRelationDefinition(tenantId: string, key: str
   const rows = await db
     .select({ active: crmConfigurations.active, definition: crmConfigurations.definition })
     .from(crmConfigurations)
-    .where(and(eq(crmConfigurations.tenantId, tenantId), eq(crmConfigurations.kind, "relation")))
-    .limit(300);
+    .where(and(
+      eq(crmConfigurations.tenantId, tenantId),
+      eq(crmConfigurations.kind, "relation"),
+      eq(crmConfigurations.configKey, key),
+    ))
+    .limit(1);
 
   for (const row of rows) {
     try {
@@ -148,8 +152,13 @@ export async function validateCustomFieldValues(
       if (typeof field.maxLength === "number" && value.length > field.maxLength) {
         throw new CrmConfigurationValidationError(`Le champ ${key} est trop long.`);
       }
-      if (typeof field.pattern === "string" && !new RegExp(field.pattern, "u").test(value)) {
-        throw new CrmConfigurationValidationError(`Le champ ${key} ne respecte pas le format requis.`);
+      if (typeof field.pattern === "string") {
+        if (!isSafeConfiguredPattern(field.pattern)) {
+          throw new CrmConfigurationValidationError(`Le format configuré pour le champ ${key} n'est pas sûr.`);
+        }
+        if (!new RegExp(field.pattern, "u").test(value)) {
+          throw new CrmConfigurationValidationError(`Le champ ${key} ne respecte pas le format requis.`);
+        }
       }
     }
     if (typeof value === "number") {
@@ -212,16 +221,17 @@ async function findConfigurationByKey(tenantId: string, kind: string, key: strin
         eq(crmConfigurations.tenantId, tenantId),
         eq(crmConfigurations.kind, kind),
         eq(crmConfigurations.active, 1),
+        eq(crmConfigurations.configKey, key),
       ),
     )
-    .limit(300);
+    .limit(1);
 
   for (const row of rows) {
     try {
       const parsed = JSON.parse(row.definition) as unknown;
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
         const definition = parsed as Record<string, unknown>;
-        if (definition.key === key) return definition;
+        if (typeof definition.key === "string" && definition.key.trim().toLowerCase() === key) return definition;
       }
     } catch {
       // Une configuration illisible n'est jamais considérée comme active et valide.

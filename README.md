@@ -20,7 +20,7 @@ Le runtime de référence est une application Next.js/Vinext sous Node.js 22+ av
 
 ## Baseline technique de départ
 
-Le commit `1a5d73ccdecc9789b653fbf294d1fd6d52bf0b6b`, tagué `baseline-technique-depart-v0.3-20260913`, est le point de départ reproductible de cette fermeture. Ce tag ne désigne pas une version v0.3 fermée.
+Le commit `1a5d73ccdecc9789b653fbf294d1fd6d52bf0b6b`, conservé par la référence distante `baseline-technique-depart-v0.3-20260913`, est le point de départ reproductible de cette fermeture. Cette référence ne désigne pas une version v0.3 fermée.
 
 Fonctions réellement validées :
 

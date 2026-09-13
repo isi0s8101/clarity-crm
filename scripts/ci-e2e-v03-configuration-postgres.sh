@@ -98,6 +98,14 @@ expect 409 -b "$ADMIN_COOKIE" -H 'content-type: application/json' -d "$(jq -nc -
 expect 201 -b "$ADMIN_COOKIE" -H 'content-type: application/json' -d '{"type":"contact","title":"Contact incompatible v0.3","data":{"email":"v03@example.test"}}' "$BASE/api/crm"
 CONTACT_ID="$(json_id)"
 expect 400 -b "$ADMIN_COOKIE" -H 'content-type: application/json' -d "$(jq -nc --arg from "$CONTACT_ID" --arg to "$COMPANY_ID" '{fromId:$from,toId:$to,relationType:"asset_company_v03"}')" "$BASE/api/crm/relations"
+# Un schéma ne peut pas être activé sur une relation legacy déjà incompatible.
+psql -X --dbname="$DATABASE_URL" -v ON_ERROR_STOP=1 -v from_id="$CONTACT_ID" -v to_id="$COMPANY_ID" -v admin_email="$CLARITY_ADMIN_EMAIL" <<'SQL'
+INSERT INTO crm_relations(id,tenant_id,from_record_id,to_record_id,relation_type,created_by)
+SELECT 'v03-legacy-incompatible','default', :'from_id', :'to_id', 'legacy_guard_v03', u.id
+FROM users u WHERE lower(u.email)=lower(:'admin_email');
+SQL
+expect 409 -b "$ADMIN_COOKIE" -H 'content-type: application/json' -d '{"kind":"relation","name":"Legacy incompatible","definition":{"key":"legacy_guard_v03","sourceType":"asset_v03","targetType":"company","cardinality":"many_to_many"}}' "$BASE/api/configurations"
+psql -X --dbname="$DATABASE_URL" -v ON_ERROR_STOP=1 -c "DELETE FROM crm_relations WHERE id='v03-legacy-incompatible'" >/dev/null
 expect 409 -b "$ADMIN_COOKIE" -H 'content-type: application/json' -X PATCH -d "$(jq -nc --arg id "$RELATION_CONFIG_ID" '{id:$id,active:false}')" "$BASE/api/configurations"
 expect 200 -b "$ADMIN_COOKIE" -X DELETE "$BASE/api/crm/relations?id=$RELATION_ID"
 expect 200 -b "$ADMIN_COOKIE" -H 'content-type: application/json' -X PATCH -d "$(jq -nc --arg id "$RELATION_CONFIG_ID" '{id:$id,active:false}')" "$BASE/api/configurations"
