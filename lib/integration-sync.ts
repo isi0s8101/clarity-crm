@@ -143,14 +143,15 @@ async function executePull(
   runtime: Awaited<ReturnType<typeof buildRuntimeContext>>,
   initialCursor: string,
 ) {
-  let cursor = initialCursor || undefined;
+  let requestCursor = initialCursor || undefined;
+  let durableCursor = initialCursor;
   let pageCount = 0;
   const maxPages = envInteger("CLARITY_INTEGRATION_MAX_PAGES_PER_JOB", 100, 1, 1000);
   const seenExternalIds = new Set<string>();
 
   while (true) {
     if (++pageCount > maxPages) throw new ConnectorError("Limite de pages de synchronisation atteinte.", { code: "page_limit", retryable: true });
-    const page = await pull(runtime, descriptor.resourceType, cursor);
+    const page = await pull(runtime, descriptor.resourceType, requestCursor);
     if (!Array.isArray(page.items)) throw new ConnectorError("Page fournisseur invalide.", { code: "invalid_provider_page" });
     let created = 0;
     let updated = 0;
@@ -190,22 +191,29 @@ async function executePull(
       if (existing.rows[0]) updated += 1; else created += 1;
     }
 
-    const nextCursor = page.nextCursor ?? cursor ?? "";
+    if (page.checkpointCursor !== undefined) {
+      if (typeof page.checkpointCursor !== "string" || page.checkpointCursor.length > 65536) {
+        throw new ConnectorError("Checkpoint fournisseur invalide.", { code: "invalid_checkpoint" });
+      }
+      durableCursor = page.checkpointCursor;
+    }
     const client = await getPool().connect();
     try {
       await client.query("BEGIN");
       await client.query(
         `UPDATE integration_sync_runs SET received=received+$1,created_count=created_count+$2,updated_count=updated_count+$3,
          skipped_count=skipped_count+$4,cursor_after=$5 WHERE tenant_id=$6 AND id=$7`,
-        [page.items.length, created, updated, skipped, nextCursor, connection.tenantId, descriptor.runId],
+        [page.items.length, created, updated, skipped, durableCursor, connection.tenantId, descriptor.runId],
       );
-      await client.query(
-        `INSERT INTO integration_sync_cursors(id,tenant_id,connection_id,resource_type,direction,cursor_value,watermark_at)
-         VALUES ($1,$2,$3,$4,'pull',$5,CURRENT_TIMESTAMP)
-         ON CONFLICT(tenant_id,connection_id,resource_type,direction) DO UPDATE SET
-           cursor_value=excluded.cursor_value,cursor_version=integration_sync_cursors.cursor_version+1,watermark_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP`,
-        [crypto.randomUUID(), connection.tenantId, connection.id, descriptor.resourceType, nextCursor],
-      );
+      if (page.checkpointCursor !== undefined) {
+        await client.query(
+          `INSERT INTO integration_sync_cursors(id,tenant_id,connection_id,resource_type,direction,cursor_value,watermark_at)
+           VALUES ($1,$2,$3,$4,'pull',$5,CURRENT_TIMESTAMP)
+           ON CONFLICT(tenant_id,connection_id,resource_type,direction) DO UPDATE SET
+             cursor_value=excluded.cursor_value,cursor_version=integration_sync_cursors.cursor_version+1,watermark_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP`,
+          [crypto.randomUUID(), connection.tenantId, connection.id, descriptor.resourceType, durableCursor],
+        );
+      }
       if (page.quota) {
         const retryAfter = boundedOptionalInteger(page.quota.retryAfterSeconds, 0, 86400);
         const remaining = boundedOptionalInteger(page.quota.remaining, 0, 2_147_483_647);
@@ -221,9 +229,11 @@ async function executePull(
       await client.query("COMMIT");
     } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
 
-    cursor = page.nextCursor;
     if (!page.hasMore) break;
-    if (!cursor) throw new ConnectorError("Curseur fournisseur absent malgré hasMore.", { code: "missing_cursor" });
+    requestCursor = page.continuationCursor;
+    if (!requestCursor || requestCursor.length > 65536) {
+      throw new ConnectorError("Curseur de pagination fournisseur absent ou invalide.", { code: "missing_continuation_cursor" });
+    }
   }
 }
 
