@@ -16,6 +16,8 @@ const server = createServer((request, response) => {
       event: request.headers["x-clarity-event"] ?? null,
       delivery: request.headers["x-clarity-delivery"] ?? null,
       signature: request.headers["x-clarity-signature"] ?? null,
+      correlation: request.headers["x-clarity-correlation"] ?? null,
+      idempotencyKey: request.headers["x-clarity-idempotency-key"] ?? null,
       body,
     }) + "\n");
     response.statusCode = 204;

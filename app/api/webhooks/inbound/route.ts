@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
   }
 
   const rawBody = await request.text();
-  if (!rawBody || rawBody.length > 131072) {
+  if (!rawBody || Buffer.byteLength(rawBody, "utf8") > 131072) {
     return NextResponse.json({ error: "Payload webhook invalide." }, { status: 400 });
   }
 

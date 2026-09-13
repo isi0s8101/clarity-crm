@@ -16,6 +16,14 @@ Le système ne crée pas de second moteur d'authentification, de tenant, de RBAC
 
 La fermeture v0.3 ajoute les procédures `ADM-REL-001` et `HELP-ERR-007` au catalogue existant. Elles alimentent les pages `/help/user`, `/help/admin`, `/help/troubleshooting` et `/help/glossary` sans créer de second centre de documentation.
 
+## Exploitation v1.0 — administration, automatisations et webhooks
+
+L’administration des objets, champs, formulaires, pipelines et relations utilise l’éditeur guidé de la vue **Configuration**. Une clé technique devient immuable après publication ; une modification est versionnée et reste soumise aux validations de compatibilité, tenant et RBAC côté serveur. Le panneau JSON est réservé au diagnostic et aux capacités avancées non représentées par l’éditeur.
+
+Les mutations CRM placent les automatisations et webhooks sortants dans `automation_jobs` (PostgreSQL). Le service systemd `clarity-crm-automation-worker.service` les consomme avec verrouillage `SKIP LOCKED`, reprise des jobs interrompus, retry exponentiel et journal consultable dans **Automatisations**. Les jobs définitivement en échec restent visibles avec leur dernière erreur ; ne pas les modifier directement en base.
+
+Les webhooks entrants conservent signature HMAC, limite de 128 KiB, tenant explicite et journal d’audit. Les sortants restent soumis à la politique SSRF (HTTPS public, résolution DNS et refus des réseaux privés/réservés) et portent des en-têtes de corrélation et d’idempotence. Le secret interne du worker (`CLARITY_AUTOMATION_WORKER_TOKEN`) est généré par l’installation POSIX et ne doit jamais être exposé.
+
 ## Format d'une procédure
 
 Le type de référence est `HelpProcedure` dans `lib/help/types.ts`.

@@ -45,7 +45,7 @@ export async function runAutomations(
   actor: AuthContext,
   event: AutomationEvent,
   record: RuntimeRecord,
-  context: { correlationId?: string; depth?: number; attempt?: number } = {},
+  context: { correlationId?: string; depth?: number; attempt?: number; jobId?: string } = {},
 ) {
   const correlationId = context.correlationId ?? crypto.randomUUID();
   const depth = context.depth ?? 0;
@@ -193,7 +193,7 @@ export async function runAutomations(
 
         if (action.kind === "webhook") {
           if (typeof action.url !== "string") throw new Error("URL webhook d'automatisation invalide.");
-          await dispatchAutomationWebhook(actor, config.id, event, record, action.url, correlationId);
+          await dispatchAutomationWebhook(actor, config.id, event, record, action.url, correlationId, context.jobId);
           outputs.push({ kind: "webhook" });
           continue;
         }

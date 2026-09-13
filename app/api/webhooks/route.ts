@@ -10,7 +10,8 @@ import {
   resolveAuthContext,
 } from "@/lib/authz";
 import { crmErrorResponse, getCrmRecord } from "@/lib/crm-core";
-import { dispatchOutboundWebhooks, type WebhookEvent } from "@/lib/webhooks";
+import { enqueueAutomationJob } from "@/lib/automation-queue";
+import type { WebhookEvent } from "@/lib/webhooks";
 import { assertSameOriginMutation } from "@/lib/native-auth";
 
 const allowedEvents = new Set<WebhookEvent>([
@@ -74,7 +75,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Événement webhook invalide." }, { status: 400 });
     }
     const record = await getCrmRecord(actor, recordId, "read");
-    await dispatchOutboundWebhooks(actor, event, record);
+    const queued = await enqueueAutomationJob(actor, event, record, {
+      idempotencyKey: "manual-webhook:" + actor.userId + ":" + event + ":" + record.id + ":" + crypto.randomUUID(),
+    });
     await audit(actor, {
       action: "webhook.dispatched",
       resourceType: record.type,
@@ -82,7 +85,7 @@ export async function POST(request: NextRequest) {
       result: "success",
       details: { event },
     });
-    return NextResponse.json({ dispatched: true });
+    return NextResponse.json({ queued: queued.queued, jobId: queued.id, correlationId: queued.correlationId }, { status: 202 });
   } catch (error) {
     const authResponse = authErrorResponse(error);
     if (authResponse) return authResponse;
