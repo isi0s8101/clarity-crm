@@ -1,18 +1,20 @@
 import { getPool } from "@/db";
 import type { AuthContext } from "@/lib/authz";
 import { runAutomations, type AutomationEvent } from "@/lib/automation";
+import { refreshProactiveRecord, refreshProactiveSweep } from "@/lib/v12-intelligence";
 import { dispatchOutboundWebhooks, type WebhookEvent } from "@/lib/webhooks";
 
 type QueueRecord = {
   id: string; tenantId: string; teamId: string; ownerId: string; type: string;
   title: string; status: string; data: Record<string, unknown>; updatedAt?: string;
 };
+type QueueMode = "event" | "webhook_only" | "proactive_refresh" | "proactive_sweep";
 type QueuePayload = {
   actor: AuthContext;
-  event: AutomationEvent;
+  event: AutomationEvent | "system.proactive_refresh" | "system.proactive_sweep";
   record: QueueRecord;
   depth: number;
-  mode?: "event" | "webhook_only";
+  mode?: QueueMode;
   webhookId?: string;
 };
 type QueueContext = {
@@ -51,6 +53,47 @@ export async function enqueueAutomationJob(
       + "VALUES ($1,$2,$3,$4,$5,$6,'pending',CURRENT_TIMESTAMP) "
       + "ON CONFLICT (tenant_id, idempotency_key) DO NOTHING RETURNING id",
     [crypto.randomUUID(), actor.tenantId, event, payload, correlationId, idempotencyKey],
+  );
+  return { id: result.rows[0]?.id ?? null, correlationId, queued: Boolean(result.rows[0]) };
+}
+
+export async function enqueueProactiveRefreshJob(actor: AuthContext, record: QueueRecord) {
+  const correlationId = crypto.randomUUID();
+  const event = "system.proactive_refresh" as const;
+  const payload: QueuePayload = { actor, event, record, depth: 0, mode: "proactive_refresh" };
+  const idempotencyKey = [event, record.id, record.updatedAt ?? ""].join(":").slice(0, 240);
+  const result = await getPool().query(
+    `INSERT INTO automation_jobs(id,tenant_id,event,payload,correlation_id,idempotency_key,status,available_at)
+     VALUES ($1,$2,$3,$4,$5,$6,'pending',CURRENT_TIMESTAMP)
+     ON CONFLICT(tenant_id,idempotency_key) DO NOTHING RETURNING id`,
+    [crypto.randomUUID(), actor.tenantId, event, JSON.stringify(payload), correlationId, idempotencyKey],
+  );
+  return { id: result.rows[0]?.id ?? null, correlationId, queued: Boolean(result.rows[0]) };
+}
+
+export async function enqueueProactiveSweepJob(actor: AuthContext, delaySeconds = 0) {
+  const interval = envInteger("CLARITY_PROACTIVE_SWEEP_INTERVAL_SECONDS", 21600, 3600, 86400);
+  const availableAtMs = Date.now() + Math.max(0, delaySeconds) * 1000;
+  const bucket = Math.floor(availableAtMs / (interval * 1000));
+  const event = "system.proactive_sweep" as const;
+  const correlationId = crypto.randomUUID();
+  const record: QueueRecord = {
+    id: `tenant:${actor.tenantId}`,
+    tenantId: actor.tenantId,
+    teamId: actor.teamId,
+    ownerId: actor.userId,
+    type: "system",
+    title: "Proactive sweep",
+    status: "active",
+    data: {},
+  };
+  const payload: QueuePayload = { actor, event, record, depth: 0, mode: "proactive_sweep" };
+  const idempotencyKey = `${event}:${actor.tenantId}:${bucket}`;
+  const result = await getPool().query(
+    `INSERT INTO automation_jobs(id,tenant_id,event,payload,correlation_id,idempotency_key,status,available_at)
+     VALUES ($1,$2,$3,$4,$5,$6,'pending',CURRENT_TIMESTAMP + ($7 * INTERVAL '1 second'))
+     ON CONFLICT(tenant_id,idempotency_key) DO NOTHING RETURNING id`,
+    [crypto.randomUUID(), actor.tenantId, event, JSON.stringify(payload), correlationId, idempotencyKey, Math.max(0, delaySeconds)],
   );
   return { id: result.rows[0]?.id ?? null, correlationId, queued: Boolean(result.rows[0]) };
 }
@@ -116,7 +159,15 @@ async function processAutomationJob(job: Record<string, unknown>, workerId: stri
     const payload = parsePayload(String(job.payload ?? ""));
     if (payload.depth > 4) throw new NonRetryableAutomationError("Profondeur maximale d'automatisation atteinte.");
 
-    if (payload.mode === "webhook_only") {
+    if (payload.mode === "proactive_refresh") {
+      await refreshProactiveRecord(payload.actor, payload.record.id);
+    } else if (payload.mode === "proactive_sweep") {
+      await refreshProactiveSweep(payload.actor, envInteger("CLARITY_PROACTIVE_SWEEP_RECORD_LIMIT", 500, 1, 1000));
+      await enqueueProactiveSweepJob(
+        payload.actor,
+        envInteger("CLARITY_PROACTIVE_SWEEP_INTERVAL_SECONDS", 21600, 3600, 86400),
+      );
+    } else if (payload.mode === "webhook_only") {
       if (!payload.webhookId || !isWebhookEvent(payload.event)) {
         throw new NonRetryableAutomationError("Relance webhook invalide.");
       }
@@ -134,6 +185,7 @@ async function processAutomationJob(job: Record<string, unknown>, workerId: stri
           : "Nouvel échec de livraison webhook.");
       }
     } else {
+      if (!isAutomationEvent(payload.event)) throw new NonRetryableAutomationError("Événement d'automatisation invalide.");
       await runAutomations(payload.actor, payload.event, payload.record, {
         correlationId: String(job.correlation_id), depth: payload.depth, attempt: Number(job.attempts), jobId,
       });
@@ -164,12 +216,20 @@ function parsePayload(value: string): QueuePayload {
   if (!parsed.actor || !parsed.record || typeof parsed.event !== "string" || typeof parsed.depth !== "number") {
     throw new NonRetryableAutomationError("Payload d'automatisation invalide.");
   }
-  if (parsed.mode !== undefined && parsed.mode !== "event" && parsed.mode !== "webhook_only") {
+  if (parsed.mode !== undefined && !["event", "webhook_only", "proactive_refresh", "proactive_sweep"].includes(parsed.mode)) {
     throw new NonRetryableAutomationError("Mode de job invalide.");
+  }
+  if ((parsed.mode === "proactive_refresh" && parsed.event !== "system.proactive_refresh")
+    || (parsed.mode === "proactive_sweep" && parsed.event !== "system.proactive_sweep")) {
+    throw new NonRetryableAutomationError("Job proactif incohérent.");
   }
   return parsed as QueuePayload;
 }
-function isWebhookEvent(event: AutomationEvent): event is WebhookEvent {
+function isAutomationEvent(event: QueuePayload["event"]): event is AutomationEvent {
+  return event === "record.created" || event === "record.updated" || event === "record.archived"
+    || event === "record.status_changed" || event === "record.pipeline_changed";
+}
+function isWebhookEvent(event: QueuePayload["event"]): event is WebhookEvent {
   return event === "record.created" || event === "record.updated" || event === "record.archived";
 }
 function envInteger(name: string, fallback: number, minimum: number, maximum: number) {
