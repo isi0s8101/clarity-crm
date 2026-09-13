@@ -71,7 +71,10 @@ export type PullItem = {
 
 export type PullPage = {
   items: PullItem[];
-  nextCursor?: string;
+  /** Opaque provider state used only to fetch the next page of the current run. Never persisted as the incremental checkpoint. */
+  continuationCursor?: string;
+  /** Durable provider checkpoint safe to persist after this page. Omit until the provider has issued a durable delta/sync/history token. */
+  checkpointCursor?: string;
   hasMore?: boolean;
   quota?: { retryAfterSeconds?: number; remaining?: number; bucket?: string };
 };
