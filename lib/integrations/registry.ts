@@ -1,10 +1,12 @@
 import type { Connector } from "@/lib/integrations/connector";
 import { googleConnector, googleScopesForCapabilities } from "@/lib/integrations/providers/google";
 import { microsoftConnector, microsoftScopesForCapabilities } from "@/lib/integrations/providers/microsoft";
+import { n8nConnector } from "@/lib/integrations/providers/n8n";
 
 const connectors = new Map<string, Connector>([
   [googleConnector.metadata().provider, googleConnector],
   [microsoftConnector.metadata().provider, microsoftConnector],
+  [n8nConnector.metadata().provider, n8nConnector],
 ]);
 
 const scopeResolvers = new Map<string, (capabilities: string[]) => string[]>([
