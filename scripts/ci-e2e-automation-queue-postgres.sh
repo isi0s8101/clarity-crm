@@ -6,8 +6,8 @@ set -Eeuo pipefail
 : "${CLARITY_ADMIN_PASSWORD:?CLARITY_ADMIN_PASSWORD requis}"
 : "${CLARITY_AUTOMATION_WORKER_TOKEN:?CLARITY_AUTOMATION_WORKER_TOKEN requis}"
 
-PORT="${PORT:-5173}"
-BASE="http://127.0.0.1:${PORT}"
+E2E_PORT="${AUTOMATION_E2E_PORT:-5183}"
+BASE="http://127.0.0.1:${E2E_PORT}"
 ADMIN_COOKIE="$(mktemp)"
 BODY="$(mktemp)"
 SERVER_LOG="$(mktemp)"
@@ -35,9 +35,18 @@ wait_for() {
   fail "Délai dépassé: $description"
 }
 
-npm start >"$SERVER_LOG" 2>&1 &
+PORT="$E2E_PORT" npm start >"$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
-wait_for "serveur prêt" bash -c "[[ \"$(curl -sS -o /dev/null -w '%{http_code}' $BASE/api/health/ready 2>/dev/null || true)\" == 200 ]]"
+server_ready=0
+for _ in $(seq 1 50); do
+  kill -0 "$SERVER_PID" 2>/dev/null || fail "serveur E2E arrêté avant readiness"
+  if [[ "$(curl -sS -o /dev/null -w '%{http_code}' "$BASE/api/health/ready" 2>/dev/null || true)" == "200" ]]; then
+    server_ready=1
+    break
+  fi
+  sleep 0.2
+done
+[[ "$server_ready" == "1" ]] || fail "serveur E2E non prêt sur ${E2E_PORT}"
 CLARITY_INTERNAL_BASE_URL="$BASE" node scripts/run-automation-worker.mjs >"$WORKER_LOG" 2>&1 &
 WORKER_PID=$!
 HOOK_OUTPUT="$HOOK_LOG" HOOK_PORT=8791 node scripts/e2e-webhook-receiver.mjs >"${HOOK_LOG}.server" 2>&1 &
@@ -55,7 +64,7 @@ jq -e '.error and .code == "PAGINATION_INVALID"' "$BODY" >/dev/null || fail "pag
 # Le job persistant exécute le moteur historique une seule fois.
 expect 201 -b "$ADMIN_COOKIE" -H "content-type: application/json" -d '{"kind":"automation","name":"Queue E2E","definition":{"key":"queue_e2e","trigger":{"event":"record.created","type":"opportunity"},"conditions":[],"actions":[{"kind":"create_task","title":"Queue {{title}}"},{"kind":"timeline","summary":"Queue {{title}}"}]}}' "$BASE/api/configurations"
 expect 201 -b "$ADMIN_COOKIE" -H "content-type: application/json" -d '{"type":"opportunity","title":"Job durable","data":{"amountCents":1000,"probability":10,"stage":"qualification"}}' "$BASE/api/crm"
-wait_for "job succès" bash -c "curl -sS -b '$ADMIN_COOKIE' $BASE/api/automations | jq -e '.jobs | any(.status == \"success\")' >/dev/null"
+wait_for "job succès" bash -c "curl -sS -b '$ADMIN_COOKIE' '$BASE/api/automations' | jq -e '.jobs | any(.status == \"success\")' >/dev/null"
 expect 200 -b "$ADMIN_COOKIE" "$BASE/api/crm?type=task&q=Queue%20Job%20durable&limit=10&offset=0"
 [[ "$(jq '[.items[] | select(.title == "Queue Job durable")] | length' "$BODY")" == 1 ]] || fail "idempotence tâche non respectée"
 
