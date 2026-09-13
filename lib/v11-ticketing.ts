@@ -1,8 +1,6 @@
 import { getPool } from "@/db";
 import { audit, type AuthContext } from "@/lib/authz";
-import { enqueueAutomationJob } from "@/lib/automation-queue";
-import { appendTimeline, createCrmRecord, getCrmRecord, listCrmRecords, updateCrmRecord, type CrmRecord } from "@/lib/crm-core";
-import { createNotification } from "@/lib/notifications";
+import { createCrmRecord, getCrmRecord, listCrmRecords, updateCrmRecord } from "@/lib/crm-core";
 
 export class TicketingError extends Error {
   constructor(message: string, public status = 400) { super(message); }
@@ -154,54 +152,6 @@ export async function updatePortalTicket(actor: AuthContext, id: string, input: 
   return ticket;
 }
 
-export async function processSlaDeadlines(limit = 50) {
-  const result = await getPool().query(
-    `SELECT id, tenant_id, team_id, owner_id, type, title, status, data, created_at, updated_at
-       FROM crm_records
-      WHERE type='ticket' AND status <> 'archived'
-        AND (
-          ((data::jsonb ->> 'response_due_at') IS NOT NULL AND (data::jsonb ->> 'first_response_at') IS NULL AND (data::jsonb ->> 'response_escalated_at') IS NULL AND (data::jsonb ->> 'response_due_at')::timestamptz <= CURRENT_TIMESTAMP)
-          OR
-          ((data::jsonb ->> 'resolution_due_at') IS NOT NULL AND (data::jsonb ->> 'resolved_at') IS NULL AND (data::jsonb ->> 'resolution_escalated_at') IS NULL AND (data::jsonb ->> 'resolution_due_at')::timestamptz <= CURRENT_TIMESTAMP)
-        )
-      ORDER BY updated_at LIMIT $1`,
-    [Math.max(1, Math.min(200, limit))],
-  );
-  let processed = 0;
-  for (const row of result.rows) {
-    const data = parseData(row.data);
-    const now = new Date().toISOString();
-    const responseOverdue = !data.first_response_at && !data.response_escalated_at && due(data.response_due_at);
-    const resolutionOverdue = !data.resolved_at && !data.resolution_escalated_at && due(data.resolution_due_at);
-    if (!responseOverdue && !resolutionOverdue) continue;
-    if (responseOverdue) data.response_escalated_at = now;
-    if (resolutionOverdue) data.resolution_escalated_at = now;
-    data.sla_state = responseOverdue && resolutionOverdue ? "breached" : resolutionOverdue ? "resolution_overdue" : "response_overdue";
-    const update = await getPool().query(
-      `UPDATE crm_records SET data=$1, updated_at=CURRENT_TIMESTAMP
-        WHERE tenant_id=$2 AND id=$3
-          AND (($4::boolean AND (data::jsonb ->> 'response_escalated_at') IS NULL) OR ($5::boolean AND (data::jsonb ->> 'resolution_escalated_at') IS NULL))
-        RETURNING updated_at`,
-      [JSON.stringify(data), row.tenant_id, row.id, responseOverdue, resolutionOverdue],
-    );
-    if (!update.rows[0]) continue;
-    const actor = await resolveActor(row.tenant_id, row.owner_id, row.team_id);
-    if (!actor) continue;
-    const record: CrmRecord = {
-      id: row.id, tenantId: row.tenant_id, teamId: row.team_id, ownerId: row.owner_id,
-      type: "ticket", title: row.title, status: row.status, data,
-      createdAt: String(row.created_at), updatedAt: String(update.rows[0].updated_at),
-    };
-    const message = resolutionOverdue ? `SLA résolution dépassé : ${row.title}` : `SLA prise en charge dépassé : ${row.title}`;
-    await createNotification({ tenantId: actor.tenantId, recipientId: row.owner_id, type: "sla", message, resourceType: "ticket", resourceId: row.id });
-    await appendTimeline(actor, record, "sla.escalated", message, { responseOverdue, resolutionOverdue });
-    await audit(actor, { action: "sla.escalated", resourceType: "ticket", resourceId: row.id, result: "success", details: { responseOverdue, resolutionOverdue } });
-    await enqueueAutomationJob(actor, "record.updated", record, { idempotencyKey: `sla:${row.id}:${data.sla_state}:${now.slice(0, 16)}` });
-    processed += 1;
-  }
-  return processed;
-}
-
 async function loadSlaPolicy(tenantId: string): Promise<SlaPolicy> {
   const result = await getPool().query(
     `SELECT definition FROM crm_configurations
@@ -222,39 +172,61 @@ async function assertActiveTenantMember(tenantId: string, userId: string) {
   const result = await getPool().query("SELECT 1 FROM memberships WHERE tenant_id=$1 AND user_id=$2 AND status='active' LIMIT 1", [tenantId, userId]);
   if (!result.rows[0]) throw new TicketingError("Demandeur absent du tenant.");
 }
+
 async function assertInternalTenantMember(tenantId: string, userId: string) {
   const result = await getPool().query("SELECT 1 FROM memberships WHERE tenant_id=$1 AND user_id=$2 AND status='active' AND role IN ('admin','user') LIMIT 1", [tenantId, userId]);
   if (!result.rows[0]) throw new TicketingError("Intervenant absent du tenant.");
 }
+
 async function resolveInternalOwner(tenantId: string): Promise<AuthContext> {
   const result = await getPool().query(
     `SELECT m.user_id, m.team_id, m.role, u.email, u.display_name
        FROM memberships m JOIN users u ON u.id=m.user_id
       WHERE m.tenant_id=$1 AND m.status='active' AND m.role IN ('admin','user')
-      ORDER BY CASE WHEN m.role='admin' THEN 0 ELSE 1 END, m.created_at LIMIT 1`, [tenantId]);
+      ORDER BY CASE WHEN m.role='admin' THEN 0 ELSE 1 END, m.created_at LIMIT 1`,
+    [tenantId],
+  );
   if (!result.rows[0]) throw new TicketingError("Aucun responsable interne disponible.", 409);
   const row = result.rows[0];
   return { userId: row.user_id, email: row.email, displayName: row.display_name, tenantId, teamId: row.team_id, role: row.role === "admin" ? "admin" : "user" };
 }
-async function resolveActor(tenantId: string, userId: string, teamId: string): Promise<AuthContext | null> {
-  const result = await getPool().query("SELECT email, display_name FROM users WHERE id=$1 LIMIT 1", [userId]);
-  if (!result.rows[0]) return null;
-  return { userId, email: result.rows[0].email, displayName: result.rows[0].display_name, tenantId, teamId, role: "admin" };
-}
+
 function publicTicket(row: Record<string, unknown>) {
   const data = parseData(row.data);
   return {
-    id: row.id, title: row.title, status: row.status, createdAt: row.createdAt, updatedAt: row.updatedAt,
-    priority: data.priority ?? "normal", category: data.category ?? "support", description: data.description ?? "",
-    stage: data.stage ?? "", slaState: data.sla_state ?? "within",
+    id: row.id,
+    title: row.title,
+    status: row.status,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    priority: data.priority ?? "normal",
+    category: data.category ?? "support",
+    description: data.description ?? "",
+    stage: data.stage ?? "",
+    slaState: data.sla_state ?? "within",
   };
 }
+
 function parseData(value: unknown): Record<string, unknown> {
   if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
   if (typeof value !== "string") return {};
-  try { const parsed = JSON.parse(value) as unknown; return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {}; } catch { return {}; }
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
 }
-function text(value: unknown, max: number) { return typeof value === "string" ? value.trim().slice(0, max) : ""; }
-function positiveInt(value: unknown, fallback: number) { const n = Number(value); return Number.isInteger(n) && n > 0 && n <= 525600 ? n : fallback; }
-function due(value: unknown) { return typeof value === "string" && !Number.isNaN(Date.parse(value)) && Date.parse(value) <= Date.now(); }
-function recordId(value: string) { return /^[A-Za-z0-9._:-]{1,100}$/.test(value); }
+
+function text(value: unknown, max: number) {
+  return typeof value === "string" ? value.trim().slice(0, max) : "";
+}
+
+function positiveInt(value: unknown, fallback: number) {
+  const n = Number(value);
+  return Number.isInteger(n) && n > 0 && n <= 525600 ? n : fallback;
+}
+
+function recordId(value: string) {
+  return /^[A-Za-z0-9._:-]{1,100}$/.test(value);
+}
