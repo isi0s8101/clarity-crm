@@ -27,8 +27,34 @@ export function V13IntegrationManager(){
   const run=useCallback(async<T,>(fn:()=>Promise<T>)=>{ setBusy(true); setError(""); setMessage(""); try{return await fn();}catch(cause){setError(cause instanceof Error?cause.message:"Erreur inconnue."); return undefined;}finally{setBusy(false);}},[]);
   const load=useCallback(async()=>{ const payload=await request("/api/integrations"); const next=Array.isArray(payload.items)?payload.items as Connection[]:[]; setItems(next); setCatalog(Array.isArray(payload.catalog)?payload.catalog as CatalogItem[]:[]); setSelectedId((current)=>current&&next.some((item)=>item.id===current)?current:(next[0]?.id??"")); },[request]);
   const loadDetails=useCallback(async(id:string)=>{ if(!id){setHealth(null);setMappings([]);return;} const [h,m]=await Promise.all([request(`/api/integrations/${encodeURIComponent(id)}/health`),request(`/api/integrations/${encodeURIComponent(id)}/mappings`)]); setHealth(h as unknown as Health); setMappings(Array.isArray(m.items)?m.items as Mapping[]:[]); },[request]);
-  useEffect(()=>{ load().catch((cause)=>setError(cause instanceof Error?cause.message:"Integration Manager indisponible.")); },[load]);
-  useEffect(()=>{ if(!selectedId) return; loadDetails(selectedId).catch((cause)=>setError(cause instanceof Error?cause.message:"Health Center indisponible.")); },[selectedId,loadDetails]);
+  useEffect(()=>{
+    let cancelled=false;
+    request("/api/integrations")
+      .then((payload)=>{
+        if(cancelled)return;
+        const next=Array.isArray(payload.items)?payload.items as Connection[]:[];
+        setItems(next);
+        setCatalog(Array.isArray(payload.catalog)?payload.catalog as CatalogItem[]:[]);
+        setSelectedId((current)=>current&&next.some((item)=>item.id===current)?current:(next[0]?.id??""));
+      })
+      .catch((cause)=>{if(!cancelled)setError(cause instanceof Error?cause.message:"Integration Manager indisponible.");});
+    return()=>{cancelled=true;};
+  },[request]);
+  useEffect(()=>{
+    if(!selectedId)return;
+    let cancelled=false;
+    Promise.all([
+      request(`/api/integrations/${encodeURIComponent(selectedId)}/health`),
+      request(`/api/integrations/${encodeURIComponent(selectedId)}/mappings`),
+    ])
+      .then(([h,m])=>{
+        if(cancelled)return;
+        setHealth(h as unknown as Health);
+        setMappings(Array.isArray(m.items)?m.items as Mapping[]:[]);
+      })
+      .catch((cause)=>{if(!cancelled)setError(cause instanceof Error?cause.message:"Health Center indisponible.");});
+    return()=>{cancelled=true;};
+  },[selectedId,request]);
 
   const mutate=async(url:string,method:string,body?:unknown)=>request(url,{method,headers:body===undefined?undefined:{"content-type":"application/json"},body:body===undefined?undefined:JSON.stringify(body)});
   const reloadSelected=async()=>{await load(); if(selectedId) await loadDetails(selectedId);};
