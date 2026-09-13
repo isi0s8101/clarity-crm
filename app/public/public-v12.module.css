@@ -1,0 +1,20 @@
+.shell { min-height: 100vh; display: grid; place-items: center; padding: 1rem; background: color-mix(in srgb, Canvas 96%, currentColor 4%); color: CanvasText; }
+.card { width: min(760px, 100%); border: 1px solid color-mix(in srgb, currentColor 16%, transparent); border-radius: 18px; padding: 1.1rem; background: Canvas; box-shadow: 0 18px 60px color-mix(in srgb, currentColor 10%, transparent); }
+.card h1 { margin: 0 0 .35rem; font-size: 1.45rem; }
+.card p { line-height: 1.5; }
+.steps { display: flex; gap: .45rem; overflow-x: auto; margin: 1rem 0; }
+.step { white-space: nowrap; padding: .35rem .6rem; border-radius: 999px; border: 1px solid color-mix(in srgb, currentColor 14%, transparent); font-size: .8rem; opacity: .65; }
+.active { opacity: 1; background: color-mix(in srgb, currentColor 9%, transparent); }
+.form { display: grid; gap: .7rem; }
+.label { display: grid; gap: .3rem; font-size: .85rem; }
+.input, .select, .textarea { box-sizing: border-box; width: 100%; border: 1px solid color-mix(in srgb, currentColor 22%, transparent); border-radius: 10px; background: Canvas; color: CanvasText; padding: .65rem .7rem; }
+.textarea { min-height: 7rem; }
+.button { border: 1px solid color-mix(in srgb, currentColor 26%, transparent); border-radius: 10px; padding: .6rem .8rem; background: color-mix(in srgb, currentColor 10%, transparent); color: inherit; cursor: pointer; }
+.button:disabled { opacity: .45; cursor: not-allowed; }
+.slots { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: .55rem; margin-top: .8rem; }
+.slot { text-align: left; border: 1px solid color-mix(in srgb, currentColor 18%, transparent); border-radius: 10px; background: transparent; color: inherit; padding: .65rem; cursor: pointer; }
+.selected { outline: 2px solid currentColor; }
+.notice { border-radius: 10px; padding: .65rem .75rem; background: color-mix(in srgb, currentColor 8%, transparent); overflow-wrap: anywhere; }
+.error { border: 1px solid currentColor; }
+.meta { opacity: .68; font-size: .8rem; }
+.row { display: flex; gap: .55rem; flex-wrap: wrap; align-items: center; }
