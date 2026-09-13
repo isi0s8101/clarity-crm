@@ -5,7 +5,6 @@ import {
   type ConnectorRuntimeContext,
   type ConnectorTokenSet,
   type IntegrationCapability,
-  type IntegrationConnectionConfig,
 } from "@/lib/integrations/connector";
 
 const AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
@@ -195,5 +194,3 @@ async function safeJson(response: Response): Promise<Record<string, unknown>> {
     return {};
   }
 }
-
-void ({} as IntegrationConnectionConfig);
