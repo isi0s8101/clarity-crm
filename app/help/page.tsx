@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { HelpHome } from "@/components/help/help-home";
-import { helpCatalog } from "@/lib/help/catalog.js";
+import { helpCatalog } from "@/lib/help/catalog-all.js";
 import type { HelpProcedure } from "@/lib/help/types";
 import { getHelpContext } from "./help-page-utils";
 
