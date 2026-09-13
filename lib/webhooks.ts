@@ -24,6 +24,7 @@ export async function dispatchOutboundWebhooks(
   record: RuntimeRecord,
   correlationId = "",
   jobId = "",
+  onlyWebhookId = "",
 ) {
   const db = getDb();
   const configs = await db
@@ -38,10 +39,16 @@ export async function dispatchOutboundWebhooks(
     )
     .limit(20);
 
+  let attempted = 0;
+  let succeeded = 0;
+  let failed = 0;
+
   for (const config of configs) {
+    if (onlyWebhookId && config.id !== onlyWebhookId) continue;
     const definition = parseDefinition(config.definition);
     if (!definition || definition.direction !== "outbound" || definition.event !== event) continue;
     if (typeof definition.key !== "string" || typeof definition.url !== "string") continue;
+    attempted += 1;
 
     const deliveryId = crypto.randomUUID();
     const allowPrivate = readEnv("CLARITY_WEBHOOK_ALLOW_PRIVATE_E2E") === "1";
@@ -60,6 +67,7 @@ export async function dispatchOutboundWebhooks(
         allowedHosts: readEnv("CLARITY_WEBHOOK_ALLOWED_HOSTS"),
       });
     } catch (error) {
+      failed += 1;
       await saveDelivery({
         id: deliveryId,
         tenantId: actor.tenantId,
@@ -74,6 +82,7 @@ export async function dispatchOutboundWebhooks(
     }
 
     if (!urlPolicy.ok) {
+      failed += 1;
       await saveDelivery({
         id: deliveryId,
         tenantId: actor.tenantId,
@@ -105,6 +114,8 @@ export async function dispatchOutboundWebhooks(
         timeoutMs: 5000,
         responseLimitBytes: 4096,
       });
+      if (response.ok) succeeded += 1;
+      else failed += 1;
       await saveDelivery({
         id: deliveryId,
         tenantId: actor.tenantId,
@@ -118,6 +129,7 @@ export async function dispatchOutboundWebhooks(
         error: response.ok ? "" : `HTTP ${response.status}`,
       });
     } catch (error) {
+      failed += 1;
       await saveDelivery({
         id: deliveryId,
         tenantId: actor.tenantId,
@@ -130,6 +142,7 @@ export async function dispatchOutboundWebhooks(
       });
     }
   }
+  return { attempted, succeeded, failed };
 }
 
 export async function dispatchAutomationWebhook(
