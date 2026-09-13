@@ -12,6 +12,7 @@ Hors périmètre volontaire : connecteurs Gmail/Outlook, OAuth Microsoft/Google,
 - Les rendez-vous restent des `crm_records(type=appointment)` ; `planning_reservations` ne porte que l'invariant de réservation concurrente.
 - La contrainte PostgreSQL `ex_planning_reservation_no_overlap` interdit deux réservations actives qui se chevauchent pour une même ressource et un même tenant.
 - Les règles v1.2 sont versionnées dans `crm_configurations` / `crm_configuration_versions`.
+- Une restauration de configuration ne réécrit jamais l'historique : elle restaure un snapshot sous forme d'une nouvelle version, avec contrôle de concurrence `expectedVersion` et audit `crm_configuration.restored`.
 - Une publication publique doit être explicitement active ; son identifiant public est opaque et ne révèle pas tenant, équipe ou ressource interne.
 - La fusion est uniquement manuelle, transactionnelle, auditée et journalisée dans `crm_merge_ledger`.
 - Le scoring, l'inactivité et le Next Best Action sont déterministes et expliquent les règles déclenchantes ; aucune recommandation destructive n'est exécutée automatiquement.
@@ -37,8 +38,10 @@ Hors périmètre volontaire : connecteurs Gmail/Outlook, OAuth Microsoft/Google,
 | V12-NBA-01 | Next Best Action non destructif | règle `next_action_rule`, `getNextActions()` | recommandation lisible, confirmation obligatoire |
 | V12-NBA-02 | Acceptation crée une action CRM traçable | `acceptNextAction()` | tâche liée créée après POST explicite |
 | V12-WORKER-01 | Réutilisation queue/worker existants | `lib/automation-queue.ts`, `/api/internal/automation-worker` | jobs `system.proactive_*` traités par le worker existant |
+| V12-CFG-01 | Historique et rollback administrateur | `/api/configurations/v12`, `app/v1/v12-config-history.tsx`, `app/page.tsx` | `scripts/ci-e2e-v12-config-rollback.sh` : v1→v2→restauration v1 sous forme v3, audit et conflit de version obsolète |
 | V12-SEC-01 | Isolation tenant / anti-IDOR | filtres tenant du CRM et services v1.2 | tentative de fusion cross-tenant => 404 |
 | V12-UPG-01 | Upgrade v1.1→v1.2 sans perte | `0009_v12_proactive_crm.sql` | `scripts/ci-upgrade-v11-to-v12-postgres.sh` |
+| V12-BACKUP-01 | Backup/restore PostgreSQL avec données v1.2 | `scripts/ci-backup-restore-postgres.sh` | restauration d'une réservation, publication, conversation/message Inbox et de `ex_planning_reservation_no_overlap` |
 | V12-HELP-01 | Centre d'aide v1.2 | `lib/help/catalog-v12.js` + `catalog-all.js` | `npm test` / `lib/help.test.mjs` |
 
 ## Migrations
@@ -49,8 +52,10 @@ La seule migration v1.2 est `postgres/migrations/0009_v12_proactive_crm.sql`. El
 
 La fermeture requiert simultanément :
 
-1. workflow historique `CI` vert : lint, tests, TypeScript, build, upgrade v0.3→v1.1, migrations, POSIX, v0.3, queue/webhooks, modules v1.1, recette v1.1, SLA, legacy D1, backup/restore ;
-2. workflow `CI v1.2` vert : lint, tests, TypeScript, build, upgrade v1.1→v1.2, migration/bootstrapping et recette `ci-e2e-v12-postgres.sh` ;
+1. workflow historique `CI` vert : lint, tests, TypeScript, build, upgrade v0.3→v1.1, migrations, POSIX, v0.3, queue/webhooks, modules v1.1, recette v1.1, SLA, legacy D1 et backup/restore incluant désormais des données v1.2 ;
+2. workflow `CI v1.2` vert : lint, tests, TypeScript, build, upgrade v1.1→v1.2, migration/bootstrapping, recette `ci-e2e-v12-postgres.sh` et recette `ci-e2e-v12-config-rollback.sh` ;
 3. exécution des mêmes workflows sur `main` après intégration finale.
+
+Les preuves finales sont les sorties GitHub Actions du HEAD réellement intégré. Aucune réussite locale ou simulée ne remplace ces contrôles.
 
 Tant qu'un de ces points n'est pas vert, le statut de fermeture reste **NO-GO**.
