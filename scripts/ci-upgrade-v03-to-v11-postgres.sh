@@ -32,8 +32,9 @@ for migration in "$ROOT_DIR"/postgres/migrations/000{1,2,3,4,5,6,7}_*.sql; do
   psql -X --dbname="$UPGRADE_URL" -v ON_ERROR_STOP=1 -f "$migration" >/dev/null
   name="$(basename "$migration")"
   hash="$(sha256sum "$migration" | awk '{print $1}')"
-  psql -X --dbname="$UPGRADE_URL" -v ON_ERROR_STOP=1 -v name="$name" -v hash="$hash" \
-    -c "INSERT INTO _clarity_migrations(name,sha256) VALUES (:'name',:'hash')" >/dev/null
+  psql -X --dbname="$UPGRADE_URL" -v ON_ERROR_STOP=1 -v name="$name" -v hash="$hash" >/dev/null <<'SQL'
+INSERT INTO _clarity_migrations(name,sha256) VALUES (:'name', :'hash');
+SQL
 done
 
 psql -X --dbname="$UPGRADE_URL" -v ON_ERROR_STOP=1 <<'SQL'
