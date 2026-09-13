@@ -1,6 +1,11 @@
 import { getPool } from "@/db";
 import type { AuthContext } from "@/lib/authz";
 import { runAutomations, type AutomationEvent } from "@/lib/automation";
+import {
+  executeIntegrationSyncJob,
+  IntegrationJobError,
+  type IntegrationSyncDescriptor,
+} from "@/lib/integration-sync";
 import { refreshProactiveRecord, refreshProactiveSweep } from "@/lib/v12-intelligence";
 import { dispatchOutboundWebhooks, type WebhookEvent } from "@/lib/webhooks";
 
@@ -8,14 +13,15 @@ type QueueRecord = {
   id: string; tenantId: string; teamId: string; ownerId: string; type: string;
   title: string; status: string; data: Record<string, unknown>; updatedAt?: string;
 };
-type QueueMode = "event" | "webhook_only" | "proactive_refresh" | "proactive_sweep";
+type QueueMode = "event" | "webhook_only" | "proactive_refresh" | "proactive_sweep" | "integration_sync";
 type QueuePayload = {
   actor: AuthContext;
-  event: AutomationEvent | "system.proactive_refresh" | "system.proactive_sweep";
+  event: AutomationEvent | "system.proactive_refresh" | "system.proactive_sweep" | "system.integration_sync";
   record: QueueRecord;
   depth: number;
   mode?: QueueMode;
   webhookId?: string;
+  integration?: IntegrationSyncDescriptor;
 };
 type QueueContext = {
   correlationId?: string;
@@ -159,7 +165,17 @@ async function processAutomationJob(job: Record<string, unknown>, workerId: stri
     const payload = parsePayload(String(job.payload ?? ""));
     if (payload.depth > 4) throw new NonRetryableAutomationError("Profondeur maximale d'automatisation atteinte.");
 
-    if (payload.mode === "proactive_refresh") {
+    if (payload.mode === "integration_sync") {
+      if (payload.event !== "system.integration_sync" || !payload.integration) {
+        throw new NonRetryableAutomationError("Job de synchronisation d'intégration incohérent.");
+      }
+      await executeIntegrationSyncJob(payload.actor, payload.integration, {
+        jobId,
+        correlationId: String(job.correlation_id),
+        attempt: Number(job.attempts ?? 1),
+        maxAttempts: Number(job.max_attempts ?? 5),
+      });
+    } else if (payload.mode === "proactive_refresh") {
       await refreshProactiveRecord(payload.actor, payload.record.id);
     } else if (payload.mode === "proactive_sweep") {
       await refreshProactiveSweep(payload.actor, envInteger("CLARITY_PROACTIVE_SWEEP_RECORD_LIMIT", 500, 1, 1000));
@@ -201,8 +217,14 @@ async function processAutomationJob(job: Record<string, unknown>, workerId: stri
   } catch (error) {
     const message = error instanceof Error ? error.message.slice(0, 2000) : "Erreur worker inconnue.";
     const attempts = Number(job.attempts ?? 1);
-    const retry = !(error instanceof NonRetryableAutomationError) && attempts < Number(job.max_attempts ?? 5);
-    const delay = Math.min(3600, 5 * 2 ** Math.max(0, attempts - 1));
+    const maxAttempts = Number(job.max_attempts ?? 5);
+    const retry = error instanceof IntegrationJobError
+      ? error.retryable && attempts < maxAttempts
+      : !(error instanceof NonRetryableAutomationError) && attempts < maxAttempts;
+    const requestedDelay = error instanceof IntegrationJobError ? error.retryAfterSeconds : undefined;
+    const delay = requestedDelay === undefined
+      ? Math.min(3600, 5 * 2 ** Math.max(0, attempts - 1))
+      : Math.min(86400, Math.max(1, requestedDelay));
     const statement = retry
       ? "UPDATE automation_jobs SET status='retrying', available_at=CURRENT_TIMESTAMP + ($1 * INTERVAL '1 second'), locked_at=NULL, locked_by='', last_error=$2 WHERE id=$3 AND locked_by=$4"
       : "UPDATE automation_jobs SET status='failed', finished_at=CURRENT_TIMESTAMP, locked_at=NULL, locked_by='', last_error=$1 WHERE id=$2 AND locked_by=$3";
@@ -216,14 +238,26 @@ function parsePayload(value: string): QueuePayload {
   if (!parsed.actor || !parsed.record || typeof parsed.event !== "string" || typeof parsed.depth !== "number") {
     throw new NonRetryableAutomationError("Payload d'automatisation invalide.");
   }
-  if (parsed.mode !== undefined && !["event", "webhook_only", "proactive_refresh", "proactive_sweep"].includes(parsed.mode)) {
+  if (parsed.mode !== undefined && !["event", "webhook_only", "proactive_refresh", "proactive_sweep", "integration_sync"].includes(parsed.mode)) {
     throw new NonRetryableAutomationError("Mode de job invalide.");
   }
   if ((parsed.mode === "proactive_refresh" && parsed.event !== "system.proactive_refresh")
-    || (parsed.mode === "proactive_sweep" && parsed.event !== "system.proactive_sweep")) {
-    throw new NonRetryableAutomationError("Job proactif incohérent.");
+    || (parsed.mode === "proactive_sweep" && parsed.event !== "system.proactive_sweep")
+    || (parsed.mode === "integration_sync" && parsed.event !== "system.integration_sync")) {
+    throw new NonRetryableAutomationError("Job système incohérent.");
+  }
+  if (parsed.mode === "integration_sync" && !isIntegrationDescriptor(parsed.integration)) {
+    throw new NonRetryableAutomationError("Descripteur de synchronisation invalide.");
   }
   return parsed as QueuePayload;
+}
+function isIntegrationDescriptor(value: unknown): value is IntegrationSyncDescriptor {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const item = value as Partial<IntegrationSyncDescriptor>;
+  return typeof item.runId === "string" && /^[A-Za-z0-9._:-]{1,120}$/.test(item.runId)
+    && typeof item.connectionId === "string" && /^[A-Za-z0-9._:-]{1,120}$/.test(item.connectionId)
+    && typeof item.resourceType === "string" && /^[a-z][a-z0-9._:-]{0,79}$/.test(item.resourceType)
+    && (item.direction === "pull" || item.direction === "push");
 }
 function isAutomationEvent(event: QueuePayload["event"]): event is AutomationEvent {
   return event === "record.created" || event === "record.updated" || event === "record.archived"
