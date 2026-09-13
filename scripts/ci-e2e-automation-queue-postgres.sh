@@ -35,7 +35,7 @@ wait_for() {
   fail "Délai dépassé: $description"
 }
 
-PORT="$E2E_PORT" npm start >"$SERVER_LOG" 2>&1 &
+./node_modules/.bin/next start --hostname 127.0.0.1 --port "$E2E_PORT" >"$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
 server_ready=0
 for _ in $(seq 1 50); do
