@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { HelpProcedureCard } from "@/components/help/help-procedure-card";
-import { helpCatalog } from "@/lib/help/catalog.js";
+import { helpCatalog } from "@/lib/help/catalog-all.js";
 import { filterProcedures } from "@/lib/help/resolver.js";
 import type { HelpProcedure } from "@/lib/help/types";
 import { getHelpContext } from "../help-page-utils";
@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 
 export default async function HelpTroubleshootingPage() {
   const context = await getHelpContext("troubleshooting");
-  const procedures = filterProcedures(context, helpCatalog).filter((item: HelpProcedure) => item.id.startsWith("HELP-ERR")) as HelpProcedure[];
+  const procedures = filterProcedures(context, helpCatalog).filter((item: HelpProcedure) => item.id.startsWith("HELP-ERR") || item.id.startsWith("HELP-V11")) as HelpProcedure[];
   return (
     <main className="min-h-screen bg-slate-50 px-5 py-6 text-slate-950 lg:px-8">
       <div className="mx-auto max-w-6xl space-y-5">
