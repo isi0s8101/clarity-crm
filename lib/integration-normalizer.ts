@@ -6,16 +6,8 @@ import { loadIntegrationMapping, type IntegrationMappingView } from "@/lib/integ
 import type { PullItem } from "@/lib/integrations/connector";
 import { addInboxMessage, createInboxConversation } from "@/lib/v12-inbox";
 
-export type ExistingIntegrationTarget = {
-  kind: string;
-  id: string;
-} | null;
-
-export type IntegrationNormalizationResult = {
-  kind: string;
-  id: string;
-  created: boolean;
-};
+export type ExistingIntegrationTarget = { kind: string; id: string } | null;
+export type IntegrationNormalizationResult = { kind: string; id: string; created: boolean };
 
 export async function normalizeIntegrationPullItem(
   actor: AuthContext,
@@ -25,9 +17,8 @@ export async function normalizeIntegrationPullItem(
   existingTarget: ExistingIntegrationTarget,
 ): Promise<IntegrationNormalizationResult | null> {
   assertCanonicalProvider(connection, item.data);
-  if (item.deleted === true) {
-    return existingTarget ? { ...existingTarget, created: false } : null;
-  }
+  if (item.deleted === true) return existingTarget ? { ...existingTarget, created: false } : null;
+
   const mapping = await loadIntegrationMapping(actor.tenantId, connection.id, resourceType);
   if (mapping && !mapping.enabled) return null;
 
@@ -35,8 +26,11 @@ export async function normalizeIntegrationPullItem(
     return normalizeMail(actor, connection, item, existingTarget, mapping);
   }
   enforceConflictPolicy(mapping, existingTarget, resourceType);
-  if (resourceType === "contacts" && item.data.kind === "contact") {
+  if ((resourceType === "contacts" || resourceType === "directory.users") && item.data.kind === "contact") {
     return normalizeContact(actor, connection, item, existingTarget, mapping);
+  }
+  if (resourceType === "directory.groups" && item.data.kind === "directory_group") {
+    return normalizeDirectoryGroup(actor, connection, item, existingTarget, mapping);
   }
   if (resourceType === "calendar" && item.data.kind === "appointment") {
     return normalizeAppointment(actor, connection, item, existingTarget, mapping);
@@ -62,16 +56,32 @@ async function normalizeContact(
   assignIfText(providerData, "organization", item.data.organization, 240);
   assignIfText(providerData, "jobTitle", item.data.jobTitle, 240);
   assignIfText(providerData, "address", item.data.address, 2000);
+  assignIfText(providerData, "directoryDn", item.data.directoryDn, 2048);
+  assignIfText(providerData, "directoryUsername", item.data.directoryUsername, 256);
   applyConfiguredFields(providerData, item.data, mapping);
+  return upsertRecord(actor, targetType, title, providerData, existingTarget, mapping);
+}
 
-  if (existingTarget) {
-    if (mapping?.conflictPolicy === "clarity_wins") return { ...existingTarget, created: false };
-    assertTargetKind(existingTarget, targetType);
-    const record = await updateCrmRecord(actor, existingTarget.id, { title, data: providerData });
-    return { kind: targetType, id: record.id, created: false };
+async function normalizeDirectoryGroup(
+  actor: AuthContext,
+  connection: IntegrationConnectionView,
+  item: PullItem,
+  existingTarget: ExistingIntegrationTarget,
+  mapping: IntegrationMappingView | null,
+): Promise<IntegrationNormalizationResult | null> {
+  const targetType = mapping?.clarityType || "";
+  if (!targetType) return null;
+  const title = cleanText(item.data.title, 160) || "Groupe annuaire";
+  const providerData = integrationMetadata(connection, item);
+  assignIfText(providerData, "email", item.data.email, 254, true);
+  assignIfText(providerData, "directoryDn", item.data.directoryDn, 2048);
+  const memberCount = Number(item.data.memberCount);
+  if (Number.isSafeInteger(memberCount) && memberCount >= 0) providerData.memberCount = memberCount;
+  if (Array.isArray(item.data.members)) {
+    providerData.members = item.data.members.map(String).slice(0, 500).map((entry) => entry.slice(0, 2048));
   }
-  const record = await createCrmRecord(actor, { type: targetType, title, status: "active", data: providerData });
-  return { kind: targetType, id: record.id, created: true };
+  applyConfiguredFields(providerData, item.data, mapping);
+  return upsertRecord(actor, targetType, title, providerData, existingTarget, mapping);
 }
 
 async function normalizeAppointment(
@@ -98,22 +108,11 @@ async function normalizeAppointment(
   assignIfText(providerData, "organizer", item.data.organizer, 1000);
   applyConfiguredFields(providerData, item.data, mapping);
 
-  let recordId: string;
-  let created = false;
-  if (existingTarget) {
-    if (mapping?.conflictPolicy === "clarity_wins") return { ...existingTarget, created: false };
-    assertTargetKind(existingTarget, targetType);
-    const record = await updateCrmRecord(actor, existingTarget.id, { title, data: providerData });
-    recordId = record.id;
-  } else {
-    const record = await createCrmRecord(actor, { type: targetType, title, status: "active", data: providerData });
-    recordId = record.id;
-    created = true;
+  const record = await upsertRecord(actor, targetType, title, providerData, existingTarget, mapping);
+  if (targetType === "appointment" && mapping?.conflictPolicy !== "clarity_wins") {
+    await synchronizePlanningReservation(actor, connection, record.id, startsAt, endsAt, String(providerData.timezone));
   }
-  if (targetType === "appointment") {
-    await synchronizePlanningReservation(actor, connection, recordId, startsAt, endsAt, String(providerData.timezone));
-  }
-  return { kind: targetType, id: recordId, created };
+  return record;
 }
 
 async function normalizeDocument(
@@ -135,14 +134,24 @@ async function normalizeDocument(
   if (Number.isSafeInteger(sizeBytes) && sizeBytes >= 0) providerData.sizeBytes = sizeBytes;
   providerData.externalLinkOnly = true;
   applyConfiguredFields(providerData, item.data, mapping);
+  return upsertRecord(actor, targetType, title, providerData, existingTarget, mapping);
+}
 
+async function upsertRecord(
+  actor: AuthContext,
+  targetType: string,
+  title: string,
+  data: Record<string, unknown>,
+  existingTarget: ExistingIntegrationTarget,
+  mapping: IntegrationMappingView | null,
+): Promise<IntegrationNormalizationResult> {
   if (existingTarget) {
     if (mapping?.conflictPolicy === "clarity_wins") return { ...existingTarget, created: false };
     assertTargetKind(existingTarget, targetType);
-    const record = await updateCrmRecord(actor, existingTarget.id, { title, data: providerData });
+    const record = await updateCrmRecord(actor, existingTarget.id, { title, data });
     return { kind: targetType, id: record.id, created: false };
   }
-  const record = await createCrmRecord(actor, { type: targetType, title, status: "active", data: providerData });
+  const record = await createCrmRecord(actor, { type: targetType, title, status: "active", data });
   return { kind: targetType, id: record.id, created: true };
 }
 
@@ -158,9 +167,7 @@ async function normalizeMail(
   }
   if (existingTarget) {
     assertTargetKind(existingTarget, "inbox_message");
-    if (mapping?.conflictPolicy === "manual") {
-      throw new IntegrationNormalizationError("Conflit manuel sur un message déjà synchronisé.");
-    }
+    if (mapping?.conflictPolicy === "manual") throw new IntegrationNormalizationError("Conflit manuel sur un message déjà synchronisé.");
     return { kind: "inbox_message", id: existingTarget.id, created: false };
   }
   const threadExternalId = cleanText(item.data.threadExternalId, 1024) || item.externalId;
@@ -174,9 +181,7 @@ async function normalizeMail(
   assignIfText(metadata, "receivedAt", item.data.receivedAt, 128);
   metadata.threadExternalId = threadExternalId;
   applyConfiguredFields(metadata, item.data, mapping);
-  const body = cleanText(item.data.bodyPreview, 65536)
-    || cleanText(item.data.subject, 240)
-    || "Message externe synchronisé";
+  const body = cleanText(item.data.bodyPreview, 65536) || cleanText(item.data.subject, 240) || "Message externe synchronisé";
   const message = await addInboxMessage(actor, conversationId, {
     body,
     direction,
@@ -240,14 +245,10 @@ async function synchronizePlanningReservation(
     );
   } catch (error) {
     if (!isPostgresExclusionViolation(error)) throw error;
-    await getPool().query(
-      `DELETE FROM planning_reservations WHERE tenant_id=$1 AND appointment_id=$2`,
-      [actor.tenantId, appointmentId],
-    );
+    await getPool().query(`DELETE FROM planning_reservations WHERE tenant_id=$1 AND appointment_id=$2`, [actor.tenantId, appointmentId]);
     await getPool().query(
       `INSERT INTO integration_health_events(id,tenant_id,connection_id,severity,code,message,details,correlation_id)
-       VALUES ($1,$2,$3,'warning','planning_overlap','Un rendez-vous externe chevauche une réservation Clarity existante.',
-         $4::jsonb,'')`,
+       VALUES ($1,$2,$3,'warning','planning_overlap','Un rendez-vous externe chevauche une réservation Clarity existante.',$4::jsonb,'')`,
       [crypto.randomUUID(), actor.tenantId, connection.id, JSON.stringify({ appointmentId, startsAt, endsAt })],
     );
   }
@@ -263,17 +264,11 @@ function integrationMetadata(connection: IntegrationConnectionView, item: PullIt
     ...(item.etag ? { integrationExternalEtag: item.etag } : {}),
   };
 }
-
 function enforceConflictPolicy(mapping: IntegrationMappingView | null, existingTarget: ExistingIntegrationTarget, resourceType: string) {
   if (!existingTarget || !mapping || mapping.conflictPolicy !== "manual") return;
   throw new IntegrationNormalizationError(`Conflit manuel requis pour la ressource ${resourceType}.`);
 }
-
-function applyConfiguredFields(
-  target: Record<string, unknown>,
-  source: Record<string, unknown>,
-  mapping: IntegrationMappingView | null,
-) {
+function applyConfiguredFields(target: Record<string, unknown>, source: Record<string, unknown>, mapping: IntegrationMappingView | null) {
   const fields = mapping?.mapping.fields;
   if (!fields || typeof fields !== "object" || Array.isArray(fields)) return;
   for (const [sourceKey, destinationRaw] of Object.entries(fields as Record<string, unknown>)) {
@@ -286,37 +281,29 @@ function applyConfiguredFields(
     else if (typeof value === "boolean") target[destination] = value;
   }
 }
-
 function assertCanonicalProvider(connection: IntegrationConnectionView, data: Record<string, unknown>) {
   const provider = typeof data.provider === "string" ? data.provider : "";
-  if (!provider || provider !== connection.provider) {
-    throw new IntegrationNormalizationError("Payload fournisseur incohérent avec la connexion.");
-  }
+  if (!provider || provider !== connection.provider) throw new IntegrationNormalizationError("Payload fournisseur incohérent avec la connexion.");
 }
-
 function assertTargetKind(target: NonNullable<ExistingIntegrationTarget>, expected: string) {
   if (target.kind !== expected) throw new IntegrationNormalizationError(`Lien d'intégration incohérent: ${target.kind} au lieu de ${expected}.`);
 }
-
 function assignIfText(target: Record<string, unknown>, key: string, value: unknown, max: number, lowercase = false) {
   const text = cleanText(value, max);
   if (text) target[key] = lowercase ? text.toLowerCase() : text;
 }
-
 function cleanText(value: unknown, max: number) {
   if (typeof value !== "string") return "";
   const text = value.trim();
   if (!text || /[\0]/.test(text)) return "";
   return text.slice(0, max);
 }
-
 function requiredIsoDate(value: unknown, message: string) {
   if (typeof value !== "string" || !value) throw new IntegrationNormalizationError(message);
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) throw new IntegrationNormalizationError(message);
   return date.toISOString();
 }
-
 function isPostgresExclusionViolation(error: unknown) {
   return Boolean(error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "23P01");
 }
