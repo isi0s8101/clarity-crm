@@ -93,6 +93,7 @@ jobs:
         run: bash scripts/ci-e2e-v11-postgres.sh
         env:
           NODE_ENV: production
+          CLARITY_DOCUMENTS_DIR: /tmp/clarity-crm-v11-documents
       - name: Validate v1.1 SLA reminders
         run: bash scripts/ci-e2e-v11-sla-reminder.sh
         env:
