@@ -32,6 +32,7 @@ export async function POST(request: NextRequest) {
       active: body.active !== false,
       definition,
     });
+    await scheduleProactiveSweep(actor, item.kind, item.active);
     return NextResponse.json({ item }, { status: 201 });
   } catch (error) { return handle(error, "v12-config:create"); }
 }
@@ -47,6 +48,7 @@ export async function PATCH(request: NextRequest) {
         active: body.active,
         expectedVersion: optionalInteger(body.expectedVersion),
       });
+      await scheduleProactiveSweep(actor, item.kind, item.active);
       return NextResponse.json({ item });
     }
     const definition = asObject(body.definition);
@@ -59,8 +61,15 @@ export async function PATCH(request: NextRequest) {
       definition,
       expectedVersion: optionalInteger(body.expectedVersion),
     });
+    await scheduleProactiveSweep(actor, item.kind, item.active);
     return NextResponse.json({ item });
   } catch (error) { return handle(error, "v12-config:update"); }
+}
+
+async function scheduleProactiveSweep(actor: Awaited<ReturnType<typeof resolveAuthContext>>, kind: string, active: boolean) {
+  if (!active || !["inactivity_rule", "scoring_rule", "next_action_rule"].includes(kind)) return;
+  const { enqueueProactiveSweepJob } = await import("@/lib/automation-queue");
+  await enqueueProactiveSweepJob(actor, 0);
 }
 
 function handle(error: unknown, label: string) {
