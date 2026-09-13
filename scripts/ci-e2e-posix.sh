@@ -8,6 +8,7 @@ SERVER_LOG="$(mktemp)"
 DOCUMENTS_DIR="$(mktemp -d)"
 IMPORT_CSV="$(mktemp --suffix=.csv)"
 cleanup() {
+  [[ -n "${WORKER_PID:-}" ]] && kill "$WORKER_PID" 2>/dev/null || true
   [[ -n "${SERVER_PID:-}" ]] && kill "$SERVER_PID" 2>/dev/null || true
   rm -f "$COOKIE_JAR" "$SERVER_LOG" "$IMPORT_CSV"
   rm -rf "$DOCUMENTS_DIR"
@@ -24,6 +25,9 @@ for _ in $(seq 1 60); do
 done
 [[ "${code:-}" == 200 ]] || { cat "$SERVER_LOG" >&2; echo "ready failed" >&2; exit 1; }
 echo "[OK] health ready"
+
+CLARITY_INTERNAL_BASE_URL="$BASE" node scripts/run-automation-worker.mjs >"${SERVER_LOG}.worker" 2>&1 &
+WORKER_PID=$!
 
 code="$(curl -sS -o /dev/null -w '%{http_code}' "$BASE/api/session")"
 [[ "$code" == 401 ]] || { echo "expected anonymous 401, got $code" >&2; exit 1; }
