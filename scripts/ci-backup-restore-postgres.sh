@@ -59,19 +59,86 @@ DATABASE_URL="$SOURCE_URL" npm run db:migrate >/dev/null
 DATABASE_URL="$SOURCE_URL" CLARITY_ADMIN_EMAIL=backup@clarity.test CLARITY_ADMIN_PASSWORD=Backup-password-2026 npm run bootstrap:admin >/dev/null
 
 psql "$SOURCE_URL" -X -v ON_ERROR_STOP=1 <<'SQL'
+WITH membership AS (
+  SELECT tenant_id, team_id, user_id FROM memberships WHERE status='active' LIMIT 1
+)
 INSERT INTO crm_records(id, tenant_id, team_id, owner_id, type, title, data, status)
-SELECT 'backup-restore-record', membership.tenant_id, membership.team_id, membership.user_id,
+SELECT 'backup-restore-record', tenant_id, team_id, user_id,
   'company', 'Backup restore proof', '{}', 'active'
-FROM memberships AS membership
-WHERE membership.status = 'active'
-LIMIT 1;
+FROM membership;
+
+WITH membership AS (
+  SELECT tenant_id, team_id, user_id FROM memberships WHERE status='active' LIMIT 1
+)
+INSERT INTO crm_records(id, tenant_id, team_id, owner_id, type, title, data, status)
+SELECT 'backup-v12-appointment', tenant_id, team_id, user_id,
+  'appointment', 'V1.2 appointment backup proof',
+  '{"startsAt":"2026-10-01T09:00:00Z","endsAt":"2026-10-01T09:30:00Z"}', 'active'
+FROM membership;
+
+WITH membership AS (
+  SELECT tenant_id, user_id FROM memberships WHERE status='active' LIMIT 1
+)
+INSERT INTO planning_reservations(
+  id,tenant_id,appointment_id,resource_kind,resource_id,starts_at,ends_at,
+  blocked_starts_at,blocked_ends_at,timezone,status,idempotency_key,created_by
+)
+SELECT 'backup-v12-reservation', tenant_id, 'backup-v12-appointment', 'user', user_id,
+  '2026-10-01T09:00:00Z'::timestamptz, '2026-10-01T09:30:00Z'::timestamptz,
+  '2026-10-01T09:00:00Z'::timestamptz, '2026-10-01T09:30:00Z'::timestamptz,
+  'UTC','booked','backup-v12-idempotency',user_id
+FROM membership;
+
+WITH membership AS (
+  SELECT tenant_id FROM memberships WHERE status='active' LIMIT 1
+)
+INSERT INTO crm_configurations(id,tenant_id,kind,name,version,active,definition)
+SELECT 'backup-v12-form',tenant_id,'form','V1.2 public form backup',1,1,
+  '{"key":"backup_v12_form","objectType":"lead","fields":[{"key":"title","required":true}]}'
+FROM membership;
+
+WITH membership AS (
+  SELECT tenant_id,team_id,user_id FROM memberships WHERE status='active' LIMIT 1
+)
+INSERT INTO crm_publications(
+  id,public_id,tenant_id,team_id,configuration_id,publication_kind,object_type,status,
+  exposed_fields,policy,created_by
+)
+SELECT 'backup-v12-publication','backup-v12-public-id',tenant_id,team_id,'backup-v12-form',
+  'form','lead','active','["title"]'::jsonb,'{"rateLimitPerHour":20}'::jsonb,user_id
+FROM membership;
+
+WITH membership AS (
+  SELECT tenant_id,team_id,user_id FROM memberships WHERE status='active' LIMIT 1
+)
+INSERT INTO crm_inbox_conversations(
+  id,tenant_id,team_id,owner_id,related_record_id,subject,status,unread_count,last_message_at
+)
+SELECT 'backup-v12-conversation',tenant_id,team_id,user_id,'backup-restore-record',
+  'V1.2 Inbox backup proof','open',1,CURRENT_TIMESTAMP
+FROM membership;
+
+WITH membership AS (
+  SELECT tenant_id FROM memberships WHERE status='active' LIMIT 1
+)
+INSERT INTO crm_inbox_messages(
+  id,tenant_id,conversation_id,sender_kind,direction,body,metadata
+)
+SELECT 'backup-v12-message',tenant_id,'backup-v12-conversation','external','inbound',
+  'V1.2 message restored','{}'::jsonb
+FROM membership;
 SQL
 
 backup_database
 psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -c "CREATE DATABASE ${RESTORE_DB};"
 restore_database
 
-[[ "$(psql "$RESTORE_URL" -X -Atqc "SELECT title FROM crm_records WHERE id = 'backup-restore-record'")" == "Backup restore proof" ]]
-[[ "$(psql "$RESTORE_URL" -X -Atqc "SELECT count(*) FROM _clarity_migrations")" -ge 6 ]]
+[[ "$(psql "$RESTORE_URL" -X -Atqc "SELECT title FROM crm_records WHERE id='backup-restore-record'")" == "Backup restore proof" ]]
+[[ "$(psql "$RESTORE_URL" -X -Atqc "SELECT count(*) FROM _clarity_migrations")" -ge 9 ]]
+[[ "$(psql "$RESTORE_URL" -X -Atqc "SELECT status FROM planning_reservations WHERE id='backup-v12-reservation'")" == "booked" ]]
+[[ "$(psql "$RESTORE_URL" -X -Atqc "SELECT public_id FROM crm_publications WHERE id='backup-v12-publication'")" == "backup-v12-public-id" ]]
+[[ "$(psql "$RESTORE_URL" -X -Atqc "SELECT subject FROM crm_inbox_conversations WHERE id='backup-v12-conversation'")" == "V1.2 Inbox backup proof" ]]
+[[ "$(psql "$RESTORE_URL" -X -Atqc "SELECT body FROM crm_inbox_messages WHERE id='backup-v12-message'")" == "V1.2 message restored" ]]
+[[ "$(psql "$RESTORE_URL" -X -Atqc "SELECT count(*) FROM pg_constraint WHERE conname='ex_planning_reservation_no_overlap'")" == 1 ]]
 
 echo "POSTGRES_BACKUP_RESTORE=OK"
