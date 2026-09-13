@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { authErrorResponse, resolveAuthContext } from "@/lib/authz";
+import { audit, authErrorResponse, resolveAuthContext } from "@/lib/authz";
 import { assertSameOriginMutation } from "@/lib/native-auth";
 import {
   getV12ConfigurationHistory,
@@ -42,6 +42,35 @@ export async function PATCH(request: NextRequest) {
     assertSameOriginMutation(request);
     const actor = await resolveAuthContext(request);
     const body = await readJsonBodyLimited(request);
+
+    if (body.restoreVersion !== undefined) {
+      const id = stringValue(body.id);
+      const restoreVersion = optionalInteger(body.restoreVersion);
+      if (!id || restoreVersion === undefined || restoreVersion < 1) {
+        return NextResponse.json({ error: "Version de restauration invalide." }, { status: 400 });
+      }
+      const history = await getV12ConfigurationHistory(actor, id);
+      const snapshot = history.find((entry) => entry.version === restoreVersion);
+      if (!snapshot) return NextResponse.json({ error: "Version de configuration introuvable." }, { status: 404 });
+      const item = await saveV12Configuration(actor, {
+        id,
+        kind: snapshot.kind,
+        name: snapshot.name,
+        active: snapshot.active,
+        definition: snapshot.definition,
+        expectedVersion: optionalInteger(body.expectedVersion),
+      });
+      await audit(actor, {
+        action: "crm_configuration.restored",
+        resourceType: item.kind,
+        resourceId: item.id,
+        result: "success",
+        details: { restoredFromVersion: restoreVersion, resultingVersion: item.version },
+      });
+      await scheduleProactiveSweep(actor, item.kind, item.active);
+      return NextResponse.json({ item, restoredFromVersion: restoreVersion });
+    }
+
     if (body.definition === undefined && typeof body.active === "boolean") {
       const item = await setV12ConfigurationActive(actor, {
         id: stringValue(body.id),
@@ -79,5 +108,9 @@ function handle(error: unknown, label: string) {
   return NextResponse.json({ error: "Configuration v1.2 indisponible." }, { status: 503 });
 }
 function stringValue(value: unknown) { return typeof value === "string" ? value : ""; }
-function optionalInteger(value: unknown) { const number = Number(value); return Number.isInteger(number) ? number : undefined; }
+function optionalInteger(value: unknown) {
+  if (value === undefined || value === null || value === "") return undefined;
+  const number = Number(value);
+  return Number.isInteger(number) ? number : undefined;
+}
 function asObject(value: unknown): Record<string, unknown> | null { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null; }
