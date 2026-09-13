@@ -28,6 +28,21 @@ type ScoreResult = {
   calculatedAt: string;
 };
 
+type InactivityResult = {
+  recordId: string;
+  configured: boolean;
+  inactive: boolean;
+  dueSoonNoAction: boolean;
+  thresholdDays: number | null;
+  dueSoonDays: number | null;
+  daysSinceLastActivity: number;
+  lastActivityAt: string;
+  hasPlannedAction: boolean;
+  reasons: Array<{ code: string; reason: string; fact: Record<string, unknown> }>;
+  configuration: { id: string; version: number } | null;
+  calculatedAt: string;
+};
+
 export async function calculateScore(actor: AuthContext, recordId: string, persist = true): Promise<ScoreResult> {
   const record = await getCrmRecord(actor, recordId, persist ? "update" : "read");
   if (record.type !== "lead" && record.type !== "opportunity") throw new V12ValidationError("Le scoring v1.2 cible les leads et opportunités.");
@@ -93,11 +108,24 @@ export async function calculateScore(actor: AuthContext, recordId: string, persi
   return result;
 }
 
-export async function evaluateInactivity(actor: AuthContext, recordId: string, persist = true) {
+export async function evaluateInactivity(actor: AuthContext, recordId: string, persist = true): Promise<InactivityResult> {
   const record = await getCrmRecord(actor, recordId, persist ? "update" : "read");
   const configs = await loadConfigs(actor.tenantId, "inactivity_rule", record.type);
   if (!configs.length) {
-    return { recordId: record.id, configured: false, inactive: false, dueSoonNoAction: false, reasons: [], calculatedAt: new Date().toISOString() };
+    return {
+      recordId: record.id,
+      configured: false,
+      inactive: false,
+      dueSoonNoAction: false,
+      thresholdDays: null,
+      dueSoonDays: null,
+      daysSinceLastActivity: 0,
+      lastActivityAt: record.updatedAt,
+      hasPlannedAction: false,
+      reasons: [],
+      configuration: null,
+      calculatedAt: new Date().toISOString(),
+    };
   }
   const definition = configs[0].definition;
   const inactiveDays = boundedInteger(definition.inactiveDays ?? 30, 1, 3650);
@@ -111,7 +139,7 @@ export async function evaluateInactivity(actor: AuthContext, recordId: string, p
   const dueInDays = dueDate ? Math.ceil((dueDate.getTime() - now) / 86_400_000) : null;
   const dueSoon = dueInDays !== null && dueInDays >= 0 && dueInDays <= dueSoonDays;
   const dueSoonNoAction = Boolean(dueSoon && requirePlannedAction && !activity.hasPlannedAction);
-  const reasons: Array<{ code: string; reason: string; fact: Record<string, unknown> }> = [];
+  const reasons: InactivityResult["reasons"] = [];
   if (inactive) reasons.push({
     code: "inactive",
     reason: `Aucune activité métier depuis ${daysSinceLastActivity} jour(s), seuil configuré ${inactiveDays}.`,
@@ -119,10 +147,10 @@ export async function evaluateInactivity(actor: AuthContext, recordId: string, p
   });
   if (dueSoonNoAction) reasons.push({
     code: "due_soon_no_action",
-    reason: `Échéance proche sans tâche ni rendez-vous futur détecté.`,
+    reason: "Échéance proche sans tâche ni rendez-vous futur détecté.",
     fact: { dueAt: dueDate?.toISOString(), dueInDays, thresholdDays: dueSoonDays },
   });
-  const result = {
+  const result: InactivityResult = {
     recordId: record.id,
     configured: true,
     inactive,
@@ -155,7 +183,7 @@ export async function getNextActions(actor: AuthContext, recordId: string) {
       ...record.data,
       inactive: inactivity.inactive,
       dueSoonNoAction: inactivity.dueSoonNoAction,
-      daysSinceLastActivity: inactivity.configured ? inactivity.daysSinceLastActivity : 0,
+      daysSinceLastActivity: inactivity.daysSinceLastActivity,
       score: score?.score,
       scoreLevel: score?.level,
     },
@@ -179,7 +207,7 @@ export async function getNextActions(actor: AuthContext, recordId: string) {
         reason: String(rule.reason ?? "Règle déterministe satisfaite.").slice(0, 240),
         triggeringData: {
           conditions,
-          inactivity: { inactive: inactivity.inactive, dueSoonNoAction: inactivity.dueSoonNoAction, daysSinceLastActivity: inactivity.configured ? inactivity.daysSinceLastActivity : null },
+          inactivity: { inactive: inactivity.inactive, dueSoonNoAction: inactivity.dueSoonNoAction, daysSinceLastActivity: inactivity.daysSinceLastActivity },
           score: score ? { score: score.score, level: score.level } : null,
         },
         priority: boundedInteger(rule.priority ?? 50, 1, 100),
