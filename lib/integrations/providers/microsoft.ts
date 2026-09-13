@@ -263,7 +263,6 @@ async function pullDefaultContacts(context: ConnectorRuntimeContext, cursor?: st
     items,
     hasMore: Boolean(next),
     continuationCursor: next ? validateGraphCursor(next, pathPrefix) : undefined,
-    checkpointCursor: next ? undefined : `full:${new Date().toISOString()}`,
   };
 }
 
