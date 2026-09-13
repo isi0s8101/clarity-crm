@@ -1,0 +1,55 @@
+name: Smoke v1.3 real providers
+on:
+  workflow_dispatch:
+    inputs:
+      google_connection_id:
+        description: "ID connexion Google (optionnel)"
+        required: false
+        type: string
+      microsoft_connection_id:
+        description: "ID connexion Microsoft (optionnel)"
+        required: false
+        type: string
+      n8n_connection_id:
+        description: "ID connexion n8n (optionnel)"
+        required: false
+        type: string
+      ldap_connection_id:
+        description: "ID connexion LDAP/AD (optionnel)"
+        required: false
+        type: string
+      run_sync:
+        description: "Exécuter aussi un pull réel (worker Clarity actif requis)"
+        required: true
+        default: false
+        type: boolean
+
+jobs:
+  smoke-real-providers:
+    runs-on: ubuntu-latest
+    environment: v13-provider-smoke
+    env:
+      CLARITY_REAL_PROVIDER_SMOKE: "1"
+      CLARITY_SMOKE_BASE_URL: ${{ secrets.CLARITY_SMOKE_BASE_URL }}
+      CLARITY_SMOKE_ADMIN_EMAIL: ${{ secrets.CLARITY_SMOKE_ADMIN_EMAIL }}
+      CLARITY_SMOKE_ADMIN_PASSWORD: ${{ secrets.CLARITY_SMOKE_ADMIN_PASSWORD }}
+      CLARITY_SMOKE_GOOGLE_CONNECTION_ID: ${{ inputs.google_connection_id }}
+      CLARITY_SMOKE_MICROSOFT_CONNECTION_ID: ${{ inputs.microsoft_connection_id }}
+      CLARITY_SMOKE_N8N_CONNECTION_ID: ${{ inputs.n8n_connection_id }}
+      CLARITY_SMOKE_LDAP_CONNECTION_ID: ${{ inputs.ldap_connection_id }}
+      CLARITY_SMOKE_SYNC: ${{ inputs.run_sync && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate smoke prerequisites
+        shell: bash
+        run: |
+          test -n "$CLARITY_SMOKE_BASE_URL"
+          test -n "$CLARITY_SMOKE_ADMIN_EMAIL"
+          test -n "$CLARITY_SMOKE_ADMIN_PASSWORD"
+          if [[ -z "$CLARITY_SMOKE_GOOGLE_CONNECTION_ID$CLARITY_SMOKE_MICROSOFT_CONNECTION_ID$CLARITY_SMOKE_N8N_CONNECTION_ID$CLARITY_SMOKE_LDAP_CONNECTION_ID" ]]; then
+            echo "Aucun ID de connexion fournisseur fourni." >&2
+            exit 2
+          fi
+          bash -n scripts/smoke-v13-providers-real.sh
+      - name: Run real provider smoke tests
+        run: bash scripts/smoke-v13-providers-real.sh
