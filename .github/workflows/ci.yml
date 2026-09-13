@@ -42,6 +42,7 @@ jobs:
           test -x scripts/ci-e2e-v03-configuration-postgres.sh
           test -x scripts/ci-e2e-automation-queue-postgres.sh
           test -f scripts/ci-e2e-v11-postgres.sh
+          test -f scripts/ci-upgrade-v03-to-v11-postgres.sh
           test -x scripts/ci-backup-restore-postgres.sh
           test -x scripts/migrate-legacy-d1.mjs
           test -x scripts/ci-legacy-d1-migration.sh
@@ -53,6 +54,7 @@ jobs:
           bash -n scripts/ci-e2e-v03-configuration-postgres.sh
           bash -n scripts/ci-e2e-automation-queue-postgres.sh
           bash -n scripts/ci-e2e-v11-postgres.sh
+          bash -n scripts/ci-upgrade-v03-to-v11-postgres.sh
           bash -n scripts/ci-backup-restore-postgres.sh
           bash -n scripts/ci-legacy-d1-migration.sh
           bash -n scripts/upgrade-legacy-d1-posix.sh
@@ -64,6 +66,8 @@ jobs:
       - run: npm run build
         env:
           NODE_ENV: production
+      - name: Validate v0.3 to v1.1 PostgreSQL upgrade
+        run: bash scripts/ci-upgrade-v03-to-v11-postgres.sh
       - run: npm run db:migrate
       - run: npm run bootstrap:admin
       - run: bash scripts/ci-e2e-posix.sh
