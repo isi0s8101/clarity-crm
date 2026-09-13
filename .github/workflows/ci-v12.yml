@@ -1,0 +1,56 @@
+name: CI v1.2
+on: [push, pull_request]
+
+jobs:
+  verify-v12-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: claritycrm
+          POSTGRES_PASSWORD: clarity-ci-password
+          POSTGRES_DB: claritycrm
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U claritycrm -d claritycrm"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      DATABASE_URL: postgresql://claritycrm:clarity-ci-password@127.0.0.1:5432/claritycrm
+      CLARITY_ADMIN_EMAIL: admin@clarity.test
+      CLARITY_ADMIN_PASSWORD: CI-password-2026-strong
+      CLARITY_COOKIE_SECURE: "0"
+      CLARITY_AUTOMATION_WORKER_TOKEN: clarity-ci-worker-token-0123456789abcdef
+      CLARITY_WEBHOOK_MASTER_SECRET: clarity-ci-master-secret-0123456789abcdef
+      CLARITY_WEBHOOK_ALLOW_PRIVATE_E2E: "1"
+      PORT: "5173"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Validate v1.2 scripts
+        run: |
+          test -f scripts/ci-upgrade-v11-to-v12-postgres.sh
+          test -f scripts/ci-e2e-v12-postgres.sh
+          bash -n scripts/ci-upgrade-v11-to-v12-postgres.sh
+          bash -n scripts/ci-e2e-v12-postgres.sh
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npx tsc --noEmit
+      - run: npm run build
+        env:
+          NODE_ENV: production
+      - name: Validate v1.1 to v1.2 PostgreSQL upgrade
+        run: bash scripts/ci-upgrade-v11-to-v12-postgres.sh
+      - run: npm run db:migrate
+      - run: npm run bootstrap:admin
+      - name: Validate v1.2 proactive CRM on PostgreSQL
+        run: bash scripts/ci-e2e-v12-postgres.sh
+        env:
+          NODE_ENV: production
