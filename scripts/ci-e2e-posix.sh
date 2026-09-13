@@ -105,7 +105,12 @@ echo "[OK] protected POSIX document storage/download"
 [[ -n "${DATABASE_URL:-}" ]] || { echo "DATABASE_URL absent pour la recette PostgreSQL" >&2; exit 1; }
 user_id="$(psql -X --dbname="$DATABASE_URL" -Atqc "SELECT id FROM users WHERE email='${CLARITY_ADMIN_EMAIL//\'/\'\'}' LIMIT 1")"
 code="$(curl -sS -b "$COOKIE_JAR" -o /tmp/clarity-notifications.json -w '%{http_code}' "$BASE/api/notifications")"
-[[ "$code" == 200 && "$(jq -r '.unread' /tmp/clarity-notifications.json)" -ge 1 ]] || exit 1
+for _ in $(seq 1 40); do
+  [[ "$code" == 200 && "$(jq -r '.unread' /tmp/clarity-notifications.json)" -ge 1 ]] && break
+  sleep 0.25
+  code="$(curl -sS -b "$COOKIE_JAR" -o /tmp/clarity-notifications.json -w '%{http_code}' "$BASE/api/notifications")"
+done
+[[ "$code" == 200 && "$(jq -r '.unread' /tmp/clarity-notifications.json)" -ge 1 ]] || { cat "${SERVER_LOG}.worker" >&2 || true; exit 1; }
 notification_id="$(jq -r '.items[] | select(.type == "automation") | .id' /tmp/clarity-notifications.json | head -n 1)"
 [[ -n "$notification_id" ]] || exit 1
 code="$(curl -sS -b "$COOKIE_JAR" -o /dev/null -w '%{http_code}' -X PATCH -H 'content-type: application/json' -d "$(jq -nc --arg id "$notification_id" '{id:$id}')" "$BASE/api/notifications")"
