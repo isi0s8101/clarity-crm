@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 
-import { GET as handleGet, POST as handlePost } from "../../handler";
+import { GET as handleGet, POST as handlePost } from "../handler";
 
 export const runtime = "nodejs";
 type RouteContext = { params: Promise<{ publicId: string }> };
