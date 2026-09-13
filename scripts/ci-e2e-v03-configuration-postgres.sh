@@ -132,7 +132,7 @@ expect 200 -b "$ADMIN_COOKIE" -H 'content-type: application/json' -X PATCH -d "$
 expect 201 -b "$ADMIN_COOKIE" -H 'content-type: application/json' -d '{"type":"toggle_v03","title":"Accepté actif","data":{}}' "$BASE/api/crm"
 expect 409 -b "$ADMIN_COOKIE" -H 'content-type: application/json' -X PATCH -d "$(jq -nc --arg id "$TOGGLE_CONFIG_ID" '{id:$id,active:false}')" "$BASE/api/configurations"
 
-# Preuve DB : une relation cross-tenant est refusée par PostgreSQL, pas seulement par l'API.
+# Preuve DB : une relation cross-tenant doit échouer précisément sur la FK tenant/cible.
 ADMIN_USER_ID="$(psql -X --dbname="$DATABASE_URL" -Atqc "SELECT id FROM users WHERE lower(email)=lower('${CLARITY_ADMIN_EMAIL//\'/\'\'}') LIMIT 1")"
 psql -X --dbname="$DATABASE_URL" -v ON_ERROR_STOP=1 -v uid="$ADMIN_USER_ID" <<'SQL'
 INSERT INTO organizations(id,name) VALUES ('v03-foreign','V0.3 Foreign') ON CONFLICT DO NOTHING;
@@ -142,10 +142,23 @@ VALUES ('v03-foreign-record','v03-foreign','v03-foreign-team', :'uid','company',
 ON CONFLICT (id) DO NOTHING;
 SQL
 expect 404 -b "$ADMIN_COOKIE" -H 'content-type: application/json' -d "$(jq -nc --arg from "$ASSET_ID" '{fromId:$from,toId:"v03-foreign-record",relationType:"asset_company_v03"}')" "$BASE/api/crm/relations"
-if psql -X --dbname="$DATABASE_URL" -v ON_ERROR_STOP=1 -v uid="$ADMIN_USER_ID" -v from_id="$ASSET_ID" -c "INSERT INTO crm_relations(id,tenant_id,from_record_id,to_record_id,relation_type,created_by) VALUES ('v03-cross-tenant-db','default', :'from_id','v03-foreign-record','related_to', :'uid');" >/dev/null 2>&1; then
+CROSS_TENANT_ERR="$(mktemp)"
+if psql -X --dbname="$DATABASE_URL" -v ON_ERROR_STOP=1 -v uid="$ADMIN_USER_ID" -v from_id="$ASSET_ID" 2>"$CROSS_TENANT_ERR" <<'SQL'
+INSERT INTO crm_relations(id,tenant_id,from_record_id,to_record_id,relation_type,created_by)
+VALUES ('v03-cross-tenant-db','default', :'from_id','v03-foreign-record','related_to', :'uid');
+SQL
+then
   echo "[V0.3][FAIL] PostgreSQL a accepté une relation cross-tenant." >&2
+  rm -f "$CROSS_TENANT_ERR"
   exit 1
 fi
+if ! grep -q 'fk_crm_relations_tenant_to' "$CROSS_TENANT_ERR"; then
+  echo "[V0.3][FAIL] Le refus cross-tenant ne provient pas de fk_crm_relations_tenant_to." >&2
+  cat "$CROSS_TENANT_ERR" >&2
+  rm -f "$CROSS_TENANT_ERR"
+  exit 1
+fi
+rm -f "$CROSS_TENANT_ERR"
 
 # Un utilisateur standard peut lire la configuration mais pas l'administrer.
 psql -X --dbname="$DATABASE_URL" -v ON_ERROR_STOP=1 -v admin_email="$CLARITY_ADMIN_EMAIL" <<'SQL'
