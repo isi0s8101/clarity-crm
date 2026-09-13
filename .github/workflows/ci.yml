@@ -90,7 +90,11 @@ jobs:
         env:
           NODE_ENV: production
       - name: Validate v1.1 on PostgreSQL
-        run: bash scripts/ci-e2e-v11-postgres.sh
+        run: |
+          bash -E -c '
+            trap '\''rc=$?; echo "[V1.1][ASSERT] line=$LINENO code=$rc" >&2'\'' ERR
+            source scripts/ci-e2e-v11-postgres.sh
+          '
         env:
           NODE_ENV: production
           CLARITY_DOCUMENTS_DIR: /tmp/clarity-crm-v11-documents
