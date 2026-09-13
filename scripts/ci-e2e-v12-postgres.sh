@@ -226,6 +226,6 @@ expect 200 -H 'content-type: application/json' -H "x-clarity-worker-token: $CLAR
 # Invariants de fermeture base de données.
 [[ "$(psql -X --dbname="$DATABASE_URL" -Atqc "SELECT count(*) FROM pg_constraint WHERE conname='ex_planning_reservation_no_overlap'")" == 1 ]]
 [[ "$(psql -X --dbname="$DATABASE_URL" -Atqc "SELECT count(*) FROM crm_public_submission_receipts WHERE tenant_id='${TENANT_ID//\'/\'\'}'")" -ge 2 ]]
-[[ "$(psql -X --dbname="$DATABASE_URL" -Atqc "SELECT count(*) FROM crm_audit_log WHERE tenant_id='${TENANT_ID//\'/\'\'}' AND action IN ('crm_records.merged','next_action.accepted','scoring.recalculated')")" -ge 2 ]]
+[[ "$(psql -X --dbname="$DATABASE_URL" -Atqc "SELECT count(*) FROM audit_events WHERE tenant_id='${TENANT_ID//\'/\'\'}' AND action IN ('crm_records.merged','next_action.accepted','scoring.recalculated')")" -ge 2 ]]
 
 echo "V12_POSTGRES_E2E=OK"
