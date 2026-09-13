@@ -8,6 +8,7 @@ import {
   requirePermission,
   resolveAuthContext,
 } from "@/lib/authz";
+import { apiError } from "@/lib/api-response";
 import { deriveWebhookSecret } from "@/lib/webhooks";
 
 export async function GET(request: NextRequest) {
@@ -16,7 +17,7 @@ export async function GET(request: NextRequest) {
     await requirePermission(actor, "webhook", "administer");
     const key = request.nextUrl.searchParams.get("key") ?? "";
     if (!/^[a-z][a-z0-9_-]{0,49}$/.test(key)) {
-      return NextResponse.json({ error: "Clé webhook invalide." }, { status: 400 });
+      return apiError("Clé webhook invalide.", 400, "WEBHOOK_KEY_INVALID");
     }
 
     const db = getDb();
@@ -39,17 +40,33 @@ export async function GET(request: NextRequest) {
         return false;
       }
     });
-    if (!exists) return NextResponse.json({ error: "Webhook introuvable." }, { status: 404 });
+    if (!exists) {
+      return apiError("Webhook introuvable.", 404, "WEBHOOK_NOT_FOUND");
+    }
 
     const secret = await deriveWebhookSecret(actor.tenantId, key);
+    const fingerprint = await sha256Hex(secret);
     return NextResponse.json(
-      { key, secret, algorithm: "HMAC-SHA256" },
+      {
+        key,
+        secret: "********",
+        masked: true,
+        fingerprint: `sha256:${fingerprint.slice(0, 16)}`,
+        algorithm: "HMAC-SHA256",
+      },
       { headers: { "cache-control": "no-store" } },
     );
   } catch (error) {
     const authResponse = authErrorResponse(error);
     if (authResponse) return authResponse;
     console.error("webhooks:secret", error);
-    return NextResponse.json({ error: "Secret webhook indisponible." }, { status: 503 });
+    return apiError("Métadonnées du secret webhook indisponibles.", 503, "WEBHOOK_SECRET_METADATA_UNAVAILABLE");
   }
+}
+
+async function sha256Hex(value: string) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 }
