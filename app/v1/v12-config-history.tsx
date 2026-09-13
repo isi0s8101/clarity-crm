@@ -42,7 +42,17 @@ export function V12ConfigurationHistory() {
     } finally { setBusy(false); }
   }, [request]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    let cancelled = false;
+    void request("/api/configurations/v12")
+      .then((payload) => {
+        if (!cancelled) setItems(Array.isArray(payload.items) ? payload.items as ConfigItem[] : []);
+      })
+      .catch((cause) => {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : "Configurations indisponibles.");
+      });
+    return () => { cancelled = true; };
+  }, [request]);
 
   const loadHistory = async (item: ConfigItem) => {
     setBusy(true); setError(""); setMessage("");
