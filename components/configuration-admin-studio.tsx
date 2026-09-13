@@ -294,7 +294,7 @@ export function ConfigurationAdminStudio({ items, onSaved }: { items: Item[]; on
             </div>
             <div className="mt-4 rounded-xl border border-dashed p-4">
               <strong className="text-sm">Prévisualisation simple</strong>
-              <div className="mt-3 space-y-2">{rows.map((row) => <label key={row.key || Math.random()} className="block text-xs">{row.key || "champ"}{row.required ? " *" : ""}<input disabled className="mt-1 w-full rounded border bg-slate-50 px-2 py-1" /></label>)}</div>
+              <div className="mt-3 space-y-2">{rows.map((row, index) => <label key={`${row.key}-${index}`} className="block text-xs">{row.key || "champ"}{row.required ? " *" : ""}<input disabled className="mt-1 w-full rounded border bg-slate-50 px-2 py-1" /></label>)}</div>
             </div>
           </section>
         ) : null}
