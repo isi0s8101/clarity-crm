@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 
-import { getDb } from "@/db";
-import { crmConfigurations, webhookDeliveries } from "@/db/schema";
+import { getDb, getPool } from "@/db";
+import { crmConfigurations } from "@/db/schema";
 import type { AuthContext } from "@/lib/authz";
 import { dispatchWebhookRequest, validateWebhookTargetUrl } from "@/lib/webhook-security.js";
 
@@ -24,6 +24,7 @@ export async function dispatchOutboundWebhooks(
   record: RuntimeRecord,
   correlationId = "",
   jobId = "",
+  onlyWebhookId = "",
 ) {
   const db = getDb();
   const configs = await db
@@ -38,10 +39,16 @@ export async function dispatchOutboundWebhooks(
     )
     .limit(20);
 
+  let attempted = 0;
+  let succeeded = 0;
+  let failed = 0;
+
   for (const config of configs) {
+    if (onlyWebhookId && config.id !== onlyWebhookId) continue;
     const definition = parseDefinition(config.definition);
     if (!definition || definition.direction !== "outbound" || definition.event !== event) continue;
     if (typeof definition.key !== "string" || typeof definition.url !== "string") continue;
+    attempted += 1;
 
     const deliveryId = crypto.randomUUID();
     const allowPrivate = readEnv("CLARITY_WEBHOOK_ALLOW_PRIVATE_E2E") === "1";
@@ -60,6 +67,7 @@ export async function dispatchOutboundWebhooks(
         allowedHosts: readEnv("CLARITY_WEBHOOK_ALLOWED_HOSTS"),
       });
     } catch (error) {
+      failed += 1;
       await saveDelivery({
         id: deliveryId,
         tenantId: actor.tenantId,
@@ -69,11 +77,14 @@ export async function dispatchOutboundWebhooks(
         status: "failure",
         requestBody: payload,
         error: error instanceof Error ? error.message.slice(0, 2000) : "Validation webhook impossible.",
+        correlationId,
+        jobId,
       });
       continue;
     }
 
     if (!urlPolicy.ok) {
+      failed += 1;
       await saveDelivery({
         id: deliveryId,
         tenantId: actor.tenantId,
@@ -83,6 +94,8 @@ export async function dispatchOutboundWebhooks(
         status: "failure",
         requestBody: payload,
         error: urlPolicy.error,
+        correlationId,
+        jobId,
       });
       continue;
     }
@@ -105,6 +118,8 @@ export async function dispatchOutboundWebhooks(
         timeoutMs: 5000,
         responseLimitBytes: 4096,
       });
+      if (response.ok) succeeded += 1;
+      else failed += 1;
       await saveDelivery({
         id: deliveryId,
         tenantId: actor.tenantId,
@@ -116,8 +131,11 @@ export async function dispatchOutboundWebhooks(
         responseCode: response.status,
         responseBody: response.responseText,
         error: response.ok ? "" : `HTTP ${response.status}`,
+        correlationId,
+        jobId,
       });
     } catch (error) {
+      failed += 1;
       await saveDelivery({
         id: deliveryId,
         tenantId: actor.tenantId,
@@ -127,9 +145,12 @@ export async function dispatchOutboundWebhooks(
         status: "failure",
         requestBody: payload,
         error: error instanceof Error ? error.message.slice(0, 2000) : "Échec de livraison webhook.",
+        correlationId,
+        jobId,
       });
     }
   }
+  return { attempted, succeeded, failed };
 }
 
 export async function dispatchAutomationWebhook(
@@ -169,14 +190,16 @@ export async function dispatchAutomationWebhook(
       });
       await saveDelivery({ id: crypto.randomUUID(), tenantId: actor.tenantId, webhookId: automationId, direction: "automation", event,
         status: response.ok ? "success" : "failure", requestBody: payload, responseCode: response.status,
-        responseBody: response.responseText, error: response.ok ? "" : `HTTP ${response.status} (tentative ${attempt}/3)` });
+        responseBody: response.responseText, error: response.ok ? "" : `HTTP ${response.status} (tentative ${attempt}/3)`,
+        correlationId, jobId });
       if (response.ok) return;
       lastError = `Webhook d'automatisation: HTTP ${response.status}`;
       if (response.status >= 400 && response.status < 500 && response.status !== 429) break;
     } catch (error) {
       lastError = error instanceof Error ? error.message : "Échec de livraison webhook.";
       await saveDelivery({ id: crypto.randomUUID(), tenantId: actor.tenantId, webhookId: automationId, direction: "automation", event,
-        status: "failure", requestBody: payload, error: `${lastError.slice(0, 1900)} (tentative ${attempt}/3)` });
+        status: "failure", requestBody: payload, error: `${lastError.slice(0, 1900)} (tentative ${attempt}/3)`,
+        correlationId, jobId });
     }
     if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, 100 * 2 ** (attempt - 1)));
   }
@@ -283,18 +306,26 @@ async function saveDelivery(input: {
   responseCode?: number;
   responseBody?: string;
   error?: string;
+  correlationId?: string;
+  jobId?: string;
 }) {
-  const db = getDb();
-  await db.insert(webhookDeliveries).values({
-    id: input.id,
-    tenantId: input.tenantId,
-    webhookId: input.webhookId,
-    direction: input.direction,
-    event: input.event,
-    status: input.status,
-    requestBody: input.requestBody.slice(0, 131072),
-    responseCode: input.responseCode,
-    responseBody: (input.responseBody ?? "").slice(0, 4096),
-    error: (input.error ?? "").slice(0, 2000),
-  });
+  await getPool().query(
+    "INSERT INTO webhook_deliveries "
+      + "(id,tenant_id,webhook_id,direction,event,status,request_body,response_code,response_body,error,correlation_id,job_id) "
+      + "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
+    [
+      input.id,
+      input.tenantId,
+      input.webhookId,
+      input.direction,
+      input.event,
+      input.status,
+      input.requestBody.slice(0, 131072),
+      input.responseCode ?? null,
+      (input.responseBody ?? "").slice(0, 4096),
+      (input.error ?? "").slice(0, 2000),
+      (input.correlationId ?? "").slice(0, 120),
+      (input.jobId ?? "").slice(0, 120),
+    ],
+  );
 }
