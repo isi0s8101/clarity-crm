@@ -2,6 +2,20 @@
 -- Les objets métier restent dans crm_records. Ces tables ne portent que les
 -- invariants qui nécessitent verrouillage transactionnel ou historique immuable.
 
+-- Le portail client réutilise les invitations, memberships et permissions v0.3.
+-- Les contraintes historiques admin/user sont élargies sans modifier les lignes existantes.
+ALTER TABLE invitations DROP CONSTRAINT IF EXISTS invitations_role_check;
+ALTER TABLE invitations
+  ADD CONSTRAINT invitations_role_check CHECK (role IN ('admin', 'user', 'client'));
+
+ALTER TABLE memberships DROP CONSTRAINT IF EXISTS memberships_role_check;
+ALTER TABLE memberships
+  ADD CONSTRAINT memberships_role_check CHECK (role IN ('admin', 'user', 'client'));
+
+ALTER TABLE role_permissions DROP CONSTRAINT IF EXISTS role_permissions_role_check;
+ALTER TABLE role_permissions
+  ADD CONSTRAINT role_permissions_role_check CHECK (role IN ('admin', 'user', 'client'));
+
 ALTER TABLE crm_documents
   ADD COLUMN IF NOT EXISTS portal_visible INTEGER NOT NULL DEFAULT 0;
 
