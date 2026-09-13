@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { processAutomationJobs } from "@/lib/automation-queue";
-import { processSlaDeadlines } from "@/lib/v11-ticketing";
+import { processSlaOperations } from "@/lib/v11-sla";
 
 export async function POST(request: NextRequest) {
   const expected = process.env.CLARITY_AUTOMATION_WORKER_TOKEN;
@@ -17,7 +17,7 @@ export async function POST(request: NextRequest) {
     const limit = typeof body.limit === "number" ? body.limit : undefined;
     const [automationProcessed, slaProcessed] = await Promise.all([
       processAutomationJobs({ workerId, limit }),
-      processSlaDeadlines(limit),
+      processSlaOperations(limit),
     ]);
     return NextResponse.json({ processed: automationProcessed + slaProcessed, automationProcessed, slaProcessed });
   } catch (error) {
