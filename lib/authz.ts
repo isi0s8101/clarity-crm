@@ -24,6 +24,7 @@ export type PermissionAction =
   | "administer";
 
 export type PermissionScope = "personal" | "team" | "tenant";
+export type AuthRole = "admin" | "user" | "client";
 
 export type AuthContext = {
   userId: string;
@@ -31,7 +32,7 @@ export type AuthContext = {
   displayName: string;
   tenantId: string;
   teamId: string;
-  role: "admin" | "user";
+  role: AuthRole;
 };
 
 type RequestLike = {
@@ -95,6 +96,16 @@ const defaultPermissions: Record<
     ["admin", "administer", "tenant"],
     ["audit", "read", "tenant"],
     ["audit", "export", "tenant"],
+    ["portal", "read", "tenant"],
+    ["portal", "create", "tenant"],
+    ["portal", "update", "tenant"],
+    ["portal", "administer", "tenant"],
+    ["inventory", "read", "tenant"],
+    ["inventory", "update", "tenant"],
+    ["loyalty", "read", "tenant"],
+    ["loyalty", "update", "tenant"],
+    ["planning", "read", "tenant"],
+    ["cpq", "create", "tenant"],
   ],
   user: [
     ["opportunity", "read", "team"],
@@ -118,6 +129,17 @@ const defaultPermissions: Record<
     ["module", "read", "tenant"],
     ["template", "read", "tenant"],
     ["audit", "read", "personal"],
+    ["inventory", "read", "team"],
+    ["inventory", "update", "team"],
+    ["loyalty", "read", "team"],
+    ["loyalty", "update", "team"],
+    ["planning", "read", "team"],
+    ["cpq", "create", "team"],
+  ],
+  client: [
+    ["portal", "read", "personal"],
+    ["portal", "create", "personal"],
+    ["portal", "update", "personal"],
   ],
 };
 
@@ -185,12 +207,12 @@ export async function resolveAuthContext(request: RequestLike): Promise<AuthCont
 
   let tenantId: string;
   let teamId: string;
-  let role: "admin" | "user";
+  let role: AuthRole;
 
   if (membership) {
     tenantId = membership.tenantId;
     teamId = await resolveTeamForTenant(tenantId, membership.teamId);
-    role = membership.role === "admin" ? "admin" : "user";
+    role = normalizeRole(membership.role);
 
     if (!membership.teamId) {
       await db
@@ -202,7 +224,7 @@ export async function resolveAuthContext(request: RequestLike): Promise<AuthCont
     tenantId = pendingInvitation.tenantId;
     await requireOrganization(tenantId);
     teamId = await resolveTeamForTenant(tenantId, pendingInvitation.teamId);
-    role = pendingInvitation.role === "admin" ? "admin" : "user";
+    role = normalizeRole(pendingInvitation.role);
 
     await upsertUser(identity);
     await db.insert(memberships).values({
@@ -323,6 +345,12 @@ export function authErrorResponse(error: unknown) {
     return Response.json({ error: error.message }, { status: error.status });
   }
   return null;
+}
+
+function normalizeRole(value: string): AuthRole {
+  if (value === "admin") return "admin";
+  if (value === "client") return "client";
+  return "user";
 }
 
 async function upsertUser(identity: { userId: string; email: string; displayName: string }) {
