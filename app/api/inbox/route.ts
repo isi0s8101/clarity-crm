@@ -85,5 +85,9 @@ function handle(error: unknown, label: string) {
 function text(value: unknown) { return typeof value === "string" ? value : ""; }
 function optionalText(value: unknown) { return typeof value === "string" ? value : undefined; }
 function nullableText(value: unknown) { return value === null || value === "" ? null : typeof value === "string" ? value : undefined; }
-function integer(value: unknown) { const n = Number(value); return Number.isInteger(n) ? n : undefined; }
+function integer(value: unknown) {
+  if (value === null || value === undefined || value === "") return undefined;
+  const n = Number(value);
+  return Number.isInteger(n) ? n : undefined;
+}
 function object(value: unknown): Record<string, unknown> | null { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null; }
