@@ -97,7 +97,19 @@ jobs:
           set -Eeuo pipefail
           container="$(docker ps --format '{{.ID}} {{.Image}}' | awk '$2 ~ /^postgres:17([@:]|$)/ { print $1; exit }')"
           [[ -n "$container" ]] || { echo "PostgreSQL 17 service container not found" >&2; exit 1; }
-          exec docker exec -i "$container" pg_dump "$@"
+          dump_file=""
+          args=()
+          while (( $# > 0 )); do
+            case "$1" in
+              --file=*) dump_file="${1#--file=}"; shift ;;
+              --file|-f) dump_file="${2:?dump file missing}"; shift 2 ;;
+              *) args+=("$1"); shift ;;
+            esac
+          done
+          if [[ -n "$dump_file" ]]; then
+            exec docker exec -i "$container" pg_dump "${args[@]}" >"$dump_file"
+          fi
+          exec docker exec -i "$container" pg_dump "${args[@]}"
           EOF
           cat >"$PG17_BIN/pg_restore" <<'EOF'
           #!/usr/bin/env bash
