@@ -11,6 +11,32 @@ CREATED=0
 cleanup(){ rm -f "$DUMP_FILE"; [[ "$CREATED" == 1 ]] && dropdb --if-exists --maintenance-db="$DATABASE_URL" "$RESTORE_DB" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
+SERVER_VERSION_NUM="$(psql -X --dbname="$DATABASE_URL" -Atqc 'SHOW server_version_num')"
+SERVER_MAJOR="$((SERVER_VERSION_NUM / 10000))"
+CLIENT_MAJOR="$(pg_dump --version | sed -E 's/.* ([0-9]+)(\..*)?$/\1/')"
+USE_DOCKER_PG_TOOLS=0
+if [[ "$CLIENT_MAJOR" != "$SERVER_MAJOR" ]]; then
+  command -v docker >/dev/null 2>&1 || { echo "[V1.3][FAIL] pg_dump major=$CLIENT_MAJOR incompatible avec PostgreSQL=$SERVER_MAJOR et Docker absent." >&2; exit 1; }
+  USE_DOCKER_PG_TOOLS=1
+fi
+
+run_pg_dump(){
+  if [[ "$USE_DOCKER_PG_TOOLS" == 1 ]]; then
+    docker run --rm --network host "postgres:${SERVER_MAJOR}" \
+      pg_dump --format=custom --no-owner --no-acl --dbname="$DATABASE_URL" >"$DUMP_FILE"
+  else
+    pg_dump --format=custom --no-owner --no-acl --dbname="$DATABASE_URL" --file="$DUMP_FILE"
+  fi
+}
+run_pg_restore(){
+  if [[ "$USE_DOCKER_PG_TOOLS" == 1 ]]; then
+    docker run --rm --network host -i "postgres:${SERVER_MAJOR}" \
+      pg_restore --no-owner --no-acl --exit-on-error --dbname="$RESTORE_URL" <"$DUMP_FILE"
+  else
+    pg_restore --no-owner --no-acl --exit-on-error --dbname="$RESTORE_URL" "$DUMP_FILE"
+  fi
+}
+
 ADMIN_ID="$(psql -X --dbname="$DATABASE_URL" -Atqc "SELECT id FROM users WHERE lower(email)=lower('${CLARITY_ADMIN_EMAIL//\'/\'\'}') LIMIT 1")"
 TENANT_ID="$(psql -X --dbname="$DATABASE_URL" -Atqc "SELECT tenant_id FROM memberships WHERE user_id='${ADMIN_ID//\'/\'\'}' AND status='active' ORDER BY created_at LIMIT 1")"
 [[ -n "$ADMIN_ID" && -n "$TENANT_ID" ]]
@@ -42,10 +68,10 @@ VALUES ('v13-backup-rate', :'tenant', 'v13-backup-connection', 'default', 42, CU
 ON CONFLICT(tenant_id,connection_id,provider_bucket) DO UPDATE SET remaining=excluded.remaining;
 SQL
 
-pg_dump --format=custom --no-owner --no-acl --dbname="$DATABASE_URL" --file="$DUMP_FILE"
+run_pg_dump
 dropdb --if-exists --maintenance-db="$DATABASE_URL" "$RESTORE_DB" >/dev/null 2>&1 || true
 createdb --maintenance-db="$DATABASE_URL" "$RESTORE_DB"; CREATED=1
-pg_restore --no-owner --no-acl --exit-on-error --dbname="$RESTORE_URL" "$DUMP_FILE"
+run_pg_restore
 
 [[ "$(psql -X --dbname="$RESTORE_URL" -Atqc "SELECT count(*) FROM _clarity_migrations WHERE name='0010_v13_integrations.sql'")" == 1 ]]
 [[ "$(psql -X --dbname="$RESTORE_URL" -Atqc "SELECT status FROM integration_connections WHERE id='v13-backup-connection'")" == connected ]]
@@ -56,4 +82,4 @@ pg_restore --no-owner --no-acl --exit-on-error --dbname="$RESTORE_URL" "$DUMP_FI
 [[ "$(psql -X --dbname="$RESTORE_URL" -Atqc "SELECT code FROM integration_health_events WHERE id='v13-backup-health'")" == backup_sentinel ]]
 [[ "$(psql -X --dbname="$RESTORE_URL" -Atqc "SELECT remaining FROM integration_rate_limits WHERE id='v13-backup-rate'")" == 42 ]]
 [[ "$(psql -X --dbname="$RESTORE_URL" -Atqc "SELECT conflict_policy FROM integration_mappings WHERE id='v13-backup-connection:contacts'")" == external_wins ]]
-echo "V13_BACKUP_RESTORE=OK"
+echo "V13_BACKUP_RESTORE=OK server_major=$SERVER_MAJOR client_major=$CLIENT_MAJOR docker_tools=$USE_DOCKER_PG_TOOLS"
