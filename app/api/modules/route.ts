@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { authErrorResponse, requirePermission, resolveAuthContext } from "@/lib/authz";
-import { installBuiltinTemplate, listModuleCatalog, ModuleCatalogError, rollbackBuiltinTemplate } from "@/lib/module-catalog";
+import { installBuiltinTemplate, listModuleCatalog, ModuleCatalogError, rollbackBuiltinTemplate } from "@/lib/module-catalog-v11";
 import { assertSameOriginMutation } from "@/lib/native-auth";
 
 export async function GET(request: NextRequest) {
