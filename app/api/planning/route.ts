@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { authErrorResponse, requirePermission, resolveAuthContext } from "@/lib/authz";
+import { bookAppointmentIdempotent } from "@/lib/v12-booking";
 import { crmErrorResponse, listCrmRecords } from "@/lib/crm-core";
 import { assertSameOriginMutation } from "@/lib/native-auth";
 import {
-  bookAppointment,
   cancelAppointment,
   getAvailabilitySlots,
   listPlanningReservations,
@@ -59,7 +59,7 @@ export async function POST(request: NextRequest) {
     assertSameOriginMutation(request);
     const actor = await resolveAuthContext(request);
     const body = await readJsonBodyLimited(request);
-    const item = await bookAppointment(actor, {
+    const item = await bookAppointmentIdempotent(actor, {
       title: stringValue(body.title),
       startsAt: stringValue(body.startsAt),
       endsAt: stringValue(body.endsAt),
