@@ -91,6 +91,30 @@ jobs:
           NODE_ENV: production
       - name: Validate v1.1 on PostgreSQL
         run: |
+          PG17_BIN="$(mktemp -d)"
+          cat >"$PG17_BIN/pg_dump" <<'EOF'
+          #!/usr/bin/env bash
+          set -Eeuo pipefail
+          container="$(docker ps --format '{{.ID}} {{.Image}}' | awk '$2 ~ /^postgres:17([@:]|$)/ { print $1; exit }')"
+          [[ -n "$container" ]] || { echo "PostgreSQL 17 service container not found" >&2; exit 1; }
+          exec docker exec -i "$container" pg_dump "$@"
+          EOF
+          cat >"$PG17_BIN/pg_restore" <<'EOF'
+          #!/usr/bin/env bash
+          set -Eeuo pipefail
+          container="$(docker ps --format '{{.ID}} {{.Image}}' | awk '$2 ~ /^postgres:17([@:]|$)/ { print $1; exit }')"
+          [[ -n "$container" ]] || { echo "PostgreSQL 17 service container not found" >&2; exit 1; }
+          if (( $# > 0 )); then
+            dump_file="${!#}"
+            if [[ -f "$dump_file" ]]; then
+              args=("${@:1:$#-1}")
+              exec docker exec -i "$container" pg_restore "${args[@]}" <"$dump_file"
+            fi
+          fi
+          exec docker exec -i "$container" pg_restore "$@"
+          EOF
+          chmod 0755 "$PG17_BIN/pg_dump" "$PG17_BIN/pg_restore"
+          export PATH="$PG17_BIN:$PATH"
           bash -E -c '
             trap '\''rc=$?; echo "[V1.1][ASSERT] line=$LINENO code=$rc" >&2'\'' ERR
             source scripts/ci-e2e-v11-postgres.sh
