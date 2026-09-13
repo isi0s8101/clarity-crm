@@ -1,0 +1,64 @@
+name: CI v1.3
+on: [push, pull_request]
+
+jobs:
+  verify-v13-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: claritycrm
+          POSTGRES_PASSWORD: clarity-ci-password
+          POSTGRES_DB: claritycrm
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U claritycrm -d claritycrm"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      DATABASE_URL: postgresql://claritycrm:clarity-ci-password@127.0.0.1:5432/claritycrm
+      CLARITY_ADMIN_EMAIL: admin@clarity.test
+      CLARITY_ADMIN_PASSWORD: CI-password-2026-strong
+      CLARITY_COOKIE_SECURE: "0"
+      CLARITY_AUTOMATION_WORKER_TOKEN: clarity-ci-worker-token-0123456789abcdef
+      CLARITY_WEBHOOK_MASTER_SECRET: clarity-ci-master-secret-0123456789abcdef
+      CLARITY_WEBHOOK_ALLOW_PRIVATE_E2E: "1"
+      CLARITY_INTEGRATION_MASTER_KEY: "1111111111111111111111111111111111111111111111111111111111111111"
+      CLARITY_INTEGRATION_MASTER_KEY_ID: v1
+      PORT: "5173"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Validate v1.3 scripts
+        run: |
+          test -f scripts/ci-upgrade-v12-to-v13-postgres.sh
+          test -f scripts/ci-e2e-v13-postgres.sh
+          test -f scripts/ci-backup-restore-v13-postgres.sh
+          test -f scripts/smoke-v13-providers-real.sh
+          bash -n scripts/ci-upgrade-v12-to-v13-postgres.sh
+          bash -n scripts/ci-e2e-v13-postgres.sh
+          bash -n scripts/ci-backup-restore-v13-postgres.sh
+          bash -n scripts/smoke-v13-providers-real.sh
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npx tsc --noEmit
+      - run: npm run build
+        env:
+          NODE_ENV: production
+      - name: Validate v1.2 to v1.3 PostgreSQL upgrade
+        run: bash scripts/ci-upgrade-v12-to-v13-postgres.sh
+      - run: npm run db:migrate
+      - run: npm run bootstrap:admin
+      - name: Validate v1.3 Integration Manager on PostgreSQL
+        run: bash scripts/ci-e2e-v13-postgres.sh
+        env:
+          NODE_ENV: production
+      - name: Validate v1.3 PostgreSQL backup and restore
+        run: bash scripts/ci-backup-restore-v13-postgres.sh
