@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, gt, ne, or, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 
 import { getDb } from "@/db";
 import {
   crmConfigurations,
   crmConfigurationVersions,
+  crmRecords,
+  crmRelations,
 } from "@/db/schema";
 import {
   audit,
@@ -14,9 +17,11 @@ import {
 } from "@/lib/authz";
 import {
   isValidConfigKind,
+  isCoreRecordType,
   normalizeWebhookUrl,
   validateConfiguration,
 } from "@/lib/crm-policy.js";
+import { validateCustomFieldValues } from "@/lib/crm-runtime-validation";
 import { hostMatchesAllowedWebhookHosts } from "@/lib/webhook-security.js";
 import { BUILTIN_TEMPLATES, getBuiltinTemplate } from "@/lib/crm-templates";
 import { assertSameOriginMutation } from "@/lib/native-auth";
@@ -109,6 +114,9 @@ export async function POST(request: NextRequest) {
     }
     const webhookError = validateWebhookNetworkPolicy(kind, validation.value);
     if (webhookError) return NextResponse.json({ error: webhookError }, { status: 400 });
+    await assertConfigurationReferences(actor.tenantId, kind, validation.value);
+    const active = body.active === false ? 0 : 1;
+    await assertConfigurationCompatible(actor.tenantId, kind, validation.value, active === 1, validation.value);
 
     const db = getDb();
     if (await configurationKeyExists(actor.tenantId, kind, validation.value)) {
@@ -116,17 +124,19 @@ export async function POST(request: NextRequest) {
     }
 
     const id = crypto.randomUUID();
-    const active = body.active === false ? 0 : 1;
-    const inserted = await db.insert(crmConfigurations).values({
-      id,
-      tenantId: actor.tenantId,
-      kind,
-      name,
-      version: 1,
-      active,
-      definition: JSON.stringify(validation.value),
-    }).returning();
-    await saveVersion(actor.tenantId, actor.userId, inserted[0]);
+    const inserted = await db.transaction(async (tx) => {
+      const rows = await tx.insert(crmConfigurations).values({
+        id,
+        tenantId: actor.tenantId,
+        kind,
+        name,
+        version: 1,
+        active,
+        definition: JSON.stringify(validation.value),
+      }).returning();
+      await tx.insert(crmConfigurationVersions).values(versionSnapshot(actor.tenantId, actor.userId, rows[0]));
+      return rows;
+    });
     await audit(actor, {
       action: "crm_configuration.created",
       resourceType: kind,
@@ -138,6 +148,12 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     const authResponse = authErrorResponse(error);
     if (authResponse) return authResponse;
+    if (error instanceof ConfigurationRequestError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+    if (isPostgresError(error, "23505")) {
+      return NextResponse.json({ error: "Une configuration avec cette clé existe déjà." }, { status: 409 });
+    }
     console.error("config:create", error);
     return NextResponse.json({ error: "Création de configuration impossible." }, { status: 503 });
   }
@@ -201,6 +217,12 @@ export async function PATCH(request: NextRequest) {
     if (!validation.ok) return NextResponse.json({ error: validation.error }, { status: 400 });
     const webhookError = validateWebhookNetworkPolicy(existing.kind, validation.value);
     if (webhookError) return NextResponse.json({ error: webhookError }, { status: 400 });
+    const existingDefinition = JSON.parse(existing.definition) as Record<string, unknown>;
+    if (existingDefinition.key !== validation.value.key) {
+      return NextResponse.json({ error: "La clé d'une configuration existante est immuable." }, { status: 409 });
+    }
+    await assertConfigurationReferences(actor.tenantId, existing.kind, validation.value);
+    await assertConfigurationCompatible(actor.tenantId, existing.kind, validation.value, active === 1, existingDefinition);
     if (existing.kind === "module" && active === 0 && existing.active === 1) {
       const blockedBy = await findActiveDependentModule(actor.tenantId, validation.value);
       if (blockedBy) {
@@ -209,18 +231,26 @@ export async function PATCH(request: NextRequest) {
     }
 
     const nextVersion = existing.version + 1;
-    const updated = await db
-      .update(crmConfigurations)
-      .set({
-        name,
-        active,
-        definition: JSON.stringify(validation.value),
-        version: nextVersion,
-        updatedAt: new Date().toISOString(),
-      })
-      .where(and(eq(crmConfigurations.id, id), eq(crmConfigurations.tenantId, actor.tenantId)))
-      .returning();
-    await saveVersion(actor.tenantId, actor.userId, updated[0]);
+    const updated = await db.transaction(async (tx) => {
+      const rows = await tx
+        .update(crmConfigurations)
+        .set({
+          name,
+          active,
+          definition: JSON.stringify(validation.value),
+          version: nextVersion,
+          updatedAt: new Date().toISOString(),
+        })
+        .where(and(
+          eq(crmConfigurations.id, id),
+          eq(crmConfigurations.tenantId, actor.tenantId),
+          eq(crmConfigurations.version, existing.version),
+        ))
+        .returning();
+      if (!rows[0]) throw new ConfigurationRequestError("Configuration modifiée simultanément, recharge requise.", 409);
+      await tx.insert(crmConfigurationVersions).values(versionSnapshot(actor.tenantId, actor.userId, rows[0]));
+      return rows;
+    });
     await audit(actor, {
       action: body.restoreVersion !== undefined ? "crm_configuration.restored" : "crm_configuration.updated",
       resourceType: existing.kind,
@@ -233,6 +263,12 @@ export async function PATCH(request: NextRequest) {
   } catch (error) {
     const authResponse = authErrorResponse(error);
     if (authResponse) return authResponse;
+    if (error instanceof ConfigurationRequestError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+    if (isPostgresError(error, "23505")) {
+      return NextResponse.json({ error: "Conflit de version ou de clé de configuration." }, { status: 409 });
+    }
     console.error("config:update", error);
     return NextResponse.json({ error: "Mise à jour de configuration impossible." }, { status: 503 });
   }
@@ -248,16 +284,21 @@ async function applyTemplate(
     const validation = validateConfiguration(entry.kind, entry.definition);
     if (!validation.ok) throw new Error(validation.error);
     if (await configurationKeyExists(actor.tenantId, entry.kind, validation.value)) continue;
-    const inserted = await db.insert(crmConfigurations).values({
-      id: crypto.randomUUID(),
-      tenantId: actor.tenantId,
-      kind: entry.kind,
-      name: entry.name,
-      version: 1,
-      active: 1,
-      definition: JSON.stringify(validation.value),
-    }).returning();
-    await saveVersion(actor.tenantId, actor.userId, inserted[0]);
+    await assertConfigurationReferences(actor.tenantId, entry.kind, validation.value);
+    await assertConfigurationCompatible(actor.tenantId, entry.kind, validation.value, true, validation.value);
+    const inserted = await db.transaction(async (tx) => {
+      const rows = await tx.insert(crmConfigurations).values({
+        id: crypto.randomUUID(),
+        tenantId: actor.tenantId,
+        kind: entry.kind,
+        name: entry.name,
+        version: 1,
+        active: 1,
+        definition: JSON.stringify(validation.value),
+      }).returning();
+      await tx.insert(crmConfigurationVersions).values(versionSnapshot(actor.tenantId, actor.userId, rows[0]));
+      return rows;
+    });
     applied.push(decodeConfiguration(inserted[0]));
   }
   return applied;
@@ -272,18 +313,15 @@ async function configurationKeyExists(
   if (typeof key !== "string") return false;
   const db = getDb();
   const rows = await db
-    .select({ definition: crmConfigurations.definition })
+    .select({ id: crmConfigurations.id })
     .from(crmConfigurations)
-    .where(and(eq(crmConfigurations.tenantId, tenantId), eq(crmConfigurations.kind, kind)))
-    .limit(300);
-  return rows.some((row) => {
-    try {
-      const parsed = JSON.parse(row.definition) as { key?: unknown };
-      return parsed.key === key;
-    } catch {
-      return false;
-    }
-  });
+    .where(and(
+      eq(crmConfigurations.tenantId, tenantId),
+      eq(crmConfigurations.kind, kind),
+      eq(crmConfigurations.configKey, key),
+    ))
+    .limit(1);
+  return Boolean(rows[0]);
 }
 
 async function findActiveDependentModule(tenantId: string, definition: Record<string, unknown>) {
@@ -314,13 +352,12 @@ async function findActiveDependentModule(tenantId: string, definition: Record<st
   return null;
 }
 
-async function saveVersion(
+function versionSnapshot(
   tenantId: string,
   actorId: string,
   config: typeof crmConfigurations.$inferSelect,
 ) {
-  const db = getDb();
-  await db.insert(crmConfigurationVersions).values({
+  return {
     id: `${config.id}:${config.version}`,
     tenantId,
     configurationId: config.id,
@@ -329,7 +366,7 @@ async function saveVersion(
     active: config.active,
     definition: config.definition,
     createdBy: actorId,
-  });
+  };
 }
 
 function validateWebhookNetworkPolicy(kind: string, definition: Record<string, unknown>) {
@@ -374,4 +411,275 @@ function asObject(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+class ConfigurationRequestError extends Error {
+  constructor(message: string, readonly status: 400 | 409) {
+    super(message);
+  }
+}
+
+function isPostgresError(error: unknown, code: string) {
+  return Boolean(error && typeof error === "object" && "code" in error && error.code === code);
+}
+
+async function assertConfigurationReferences(
+  tenantId: string,
+  kind: string,
+  definition: Record<string, unknown>,
+) {
+  if (kind === "object") {
+    if (isCoreRecordType(definition.key)) {
+      throw new ConfigurationRequestError("Un objet personnalisé ne peut pas remplacer un objet natif.", 409);
+    }
+    for (const rawField of Array.isArray(definition.fields) ? definition.fields : []) {
+      const field = asObject(rawField);
+      if (field?.type === "relation" && typeof field.targetType === "string") {
+        await requireConfiguredObjectType(tenantId, field.targetType);
+      }
+    }
+    return;
+  }
+
+  const referencedTypes = new Set<string>();
+  if ((kind === "pipeline" || kind === "form") && typeof definition.objectType === "string") {
+    referencedTypes.add(definition.objectType);
+  }
+  if (kind === "relation") {
+    if (typeof definition.sourceType === "string") referencedTypes.add(definition.sourceType);
+    if (typeof definition.targetType === "string") referencedTypes.add(definition.targetType);
+  }
+  for (const type of referencedTypes) await requireConfiguredObjectType(tenantId, type);
+
+  if (kind === "form" && typeof definition.objectType === "string" && !isCoreRecordType(definition.objectType)) {
+    const objectDefinition = await findActiveConfigurationDefinition(tenantId, "object", definition.objectType);
+    const objectFields = new Map<string, Record<string, unknown>>();
+    for (const rawField of Array.isArray(objectDefinition?.fields) ? objectDefinition.fields : []) {
+      const field = asObject(rawField);
+      if (field && typeof field.key === "string") objectFields.set(field.key, field);
+    }
+    const formFieldKeys = new Set<string>();
+    for (const rawField of Array.isArray(definition.fields) ? definition.fields : []) {
+      const field = asObject(rawField);
+      const key = typeof field?.key === "string" ? field.key : "";
+      formFieldKeys.add(key);
+      if (key !== "title" && key !== "status" && !objectFields.has(key)) {
+        throw new ConfigurationRequestError(`Le formulaire référence un champ inconnu : ${key}.`, 400);
+      }
+      if (objectFields.get(key)?.required === true && field?.required !== true) {
+        throw new ConfigurationRequestError(`Le formulaire doit conserver le champ obligatoire : ${key}.`, 400);
+      }
+    }
+    for (const [key, field] of objectFields) {
+      if (field.required === true && !formFieldKeys.has(key)) {
+        throw new ConfigurationRequestError(`Le formulaire omet le champ obligatoire : ${key}.`, 400);
+      }
+    }
+  }
+}
+
+async function requireConfiguredObjectType(tenantId: string, type: string) {
+  if (isCoreRecordType(type)) return;
+  if (!(await findActiveConfigurationDefinition(tenantId, "object", type))) {
+    throw new ConfigurationRequestError(`Objet métier référencé inconnu ou désactivé : ${type}.`, 400);
+  }
+}
+
+async function findActiveConfigurationDefinition(tenantId: string, kind: string, key: string) {
+  const rows = await getDb()
+    .select({ definition: crmConfigurations.definition })
+    .from(crmConfigurations)
+    .where(and(
+      eq(crmConfigurations.tenantId, tenantId),
+      eq(crmConfigurations.kind, kind),
+      eq(crmConfigurations.active, 1),
+      eq(crmConfigurations.configKey, key),
+    ))
+    .limit(1);
+  for (const row of rows) {
+    try {
+      const definition = JSON.parse(row.definition) as Record<string, unknown>;
+      if (typeof definition.key === "string" && definition.key.trim().toLowerCase() === key) return definition;
+    } catch {
+      // Une configuration illisible ne satisfait jamais une dépendance.
+    }
+  }
+  return null;
+}
+
+async function assertConfigurationCompatible(
+  tenantId: string,
+  kind: string,
+  definition: Record<string, unknown>,
+  active: boolean,
+  previous: Record<string, unknown>,
+) {
+  const key = String(definition.key ?? "");
+  if (kind === "object") {
+    const currentFieldKeys = new Set(
+      (Array.isArray(definition.fields) ? definition.fields : [])
+        .map(asObject)
+        .filter((field): field is Record<string, unknown> => Boolean(field))
+        .map((field) => field.key)
+        .filter((fieldKey): fieldKey is string => typeof fieldKey === "string"),
+    );
+    const previousFieldKeys = new Set(
+      (Array.isArray(previous.fields) ? previous.fields : [])
+        .map(asObject)
+        .filter((field): field is Record<string, unknown> => Boolean(field))
+        .map((field) => field.key)
+        .filter((fieldKey): fieldKey is string => typeof fieldKey === "string"),
+    );
+    const removedFieldKeys = [...previousFieldKeys].filter((fieldKey) => !currentFieldKeys.has(fieldKey));
+    let cursor = "";
+    let hasRecords = false;
+    while (true) {
+      const rows = await getDb()
+        .select({ id: crmRecords.id, data: crmRecords.data })
+        .from(crmRecords)
+        .where(and(eq(crmRecords.tenantId, tenantId), eq(crmRecords.type, key), gt(crmRecords.id, cursor)))
+        .orderBy(crmRecords.id)
+        .limit(250);
+      if (rows.length === 0) break;
+      hasRecords = true;
+      for (const row of rows) {
+        let data: Record<string, unknown>;
+        try {
+          data = JSON.parse(row.data) as Record<string, unknown>;
+        } catch {
+          throw new ConfigurationRequestError(`La fiche ${row.id} contient des données illisibles.`, 409);
+        }
+        const removedField = removedFieldKeys.find((fieldKey) => data[fieldKey] !== undefined && data[fieldKey] !== null);
+        if (removedField) {
+          throw new ConfigurationRequestError(`Le champ ${removedField} contient encore des données dans la fiche ${row.id}.`, 409);
+        }
+        try {
+          await validateCustomFieldValues(tenantId, definition, data);
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : "données incompatibles";
+          throw new ConfigurationRequestError(`Configuration incompatible avec la fiche ${row.id} : ${reason}`, 409);
+        }
+      }
+      cursor = rows.at(-1)?.id ?? cursor;
+      if (rows.length < 250) break;
+    }
+    if (!active && hasRecords) {
+      throw new ConfigurationRequestError("Impossible de désactiver un objet qui contient des fiches.", 409);
+    }
+
+    const dependentConfigurations = await getDb()
+      .select({ kind: crmConfigurations.kind, name: crmConfigurations.name, definition: crmConfigurations.definition })
+      .from(crmConfigurations)
+      .where(and(eq(crmConfigurations.tenantId, tenantId), eq(crmConfigurations.active, 1)))
+      .limit(500);
+    for (const dependent of dependentConfigurations) {
+      let candidate: Record<string, unknown>;
+      try { candidate = JSON.parse(dependent.definition) as Record<string, unknown>; } catch { continue; }
+      const referencesObject =
+        ((dependent.kind === "pipeline" || dependent.kind === "form") && candidate.objectType === key) ||
+        (dependent.kind === "relation" && (candidate.sourceType === key || candidate.targetType === key));
+      if (!referencesObject) continue;
+      if (!active) {
+        throw new ConfigurationRequestError(`Objet requis par la configuration active « ${dependent.name} ».`, 409);
+      }
+      if (dependent.kind === "form") {
+        for (const rawField of Array.isArray(candidate.fields) ? candidate.fields : []) {
+          const formField = asObject(rawField);
+          const fieldKey = typeof formField?.key === "string" ? formField.key : "";
+          if (fieldKey !== "title" && fieldKey !== "status" && !currentFieldKeys.has(fieldKey)) {
+            throw new ConfigurationRequestError(`Le formulaire « ${dependent.name} » utilise encore le champ ${fieldKey}.`, 409);
+          }
+        }
+      }
+    }
+  }
+
+  if (kind === "pipeline") {
+    const stages = new Set(
+      (Array.isArray(definition.stages) ? definition.stages : [])
+        .map(asObject)
+        .filter((stage): stage is Record<string, unknown> => Boolean(stage))
+        .map((stage) => stage.key),
+    );
+    const rows = await getDb()
+      .select({ id: crmRecords.id, type: crmRecords.type, data: crmRecords.data })
+      .from(crmRecords)
+      .where(eq(crmRecords.tenantId, tenantId));
+    for (const row of rows) {
+      let data: Record<string, unknown>;
+      try { data = JSON.parse(row.data) as Record<string, unknown>; } catch { continue; }
+      if (data.pipelineKey !== key) continue;
+      if (row.type !== definition.objectType || !stages.has(data.stage)) {
+        throw new ConfigurationRequestError(`Pipeline incompatible avec la fiche ${row.id}.`, 409);
+      }
+      if (!active) throw new ConfigurationRequestError("Impossible de désactiver un pipeline utilisé.", 409);
+    }
+  }
+
+  if (kind === "relation") {
+    const db = getDb();
+    const existing = await db
+      .select({ id: crmRelations.id })
+      .from(crmRelations)
+      .where(and(eq(crmRelations.tenantId, tenantId), eq(crmRelations.relationType, key)))
+      .limit(1);
+    if (existing[0] && !active) {
+      throw new ConfigurationRequestError("Impossible de désactiver une relation encore utilisée.", 409);
+    }
+    if (active && existing[0]) {
+      const sourceRecord = alias(crmRecords, "configured_relation_source");
+      const targetRecord = alias(crmRecords, "configured_relation_target");
+      const invalidEndpoint = await db
+        .select({ id: crmRelations.id })
+        .from(crmRelations)
+        .innerJoin(sourceRecord, and(
+          eq(crmRelations.tenantId, sourceRecord.tenantId),
+          eq(crmRelations.fromRecordId, sourceRecord.id),
+        ))
+        .innerJoin(targetRecord, and(
+          eq(crmRelations.tenantId, targetRecord.tenantId),
+          eq(crmRelations.toRecordId, targetRecord.id),
+        ))
+        .where(and(
+          eq(crmRelations.tenantId, tenantId),
+          eq(crmRelations.relationType, key),
+          or(ne(sourceRecord.type, String(definition.sourceType)), ne(targetRecord.type, String(definition.targetType))),
+        ))
+        .limit(1);
+      if (invalidEndpoint[0]) {
+        throw new ConfigurationRequestError(`La relation existante ${invalidEndpoint[0].id} a des objets source ou cible incompatibles.`, 409);
+      }
+
+      const cardinality = definition.cardinality;
+      const duplicateSources = cardinality === "one_to_one" || cardinality === "many_to_one"
+        ? await db
+          .select({ recordId: crmRelations.fromRecordId })
+          .from(crmRelations)
+          .where(and(eq(crmRelations.tenantId, tenantId), eq(crmRelations.relationType, key)))
+          .groupBy(crmRelations.fromRecordId)
+          .having(sql`count(*) > 1`)
+          .limit(1)
+        : [];
+      const duplicateTargets = cardinality === "one_to_one" || cardinality === "one_to_many"
+        ? await db
+          .select({ recordId: crmRelations.toRecordId })
+          .from(crmRelations)
+          .where(and(eq(crmRelations.tenantId, tenantId), eq(crmRelations.relationType, key)))
+          .groupBy(crmRelations.toRecordId)
+          .having(sql`count(*) > 1`)
+          .limit(1)
+        : [];
+      if (duplicateSources[0] || duplicateTargets[0]) {
+        throw new ConfigurationRequestError("Les relations existantes dépassent la cardinalité configurée.", 409);
+      }
+    }
+    if (
+      existing[0] &&
+      (previous.sourceType !== definition.sourceType ||
+        previous.targetType !== definition.targetType ||
+        previous.cardinality !== definition.cardinality)
+    ) {
+      throw new ConfigurationRequestError("Impossible de modifier la structure d'une relation encore utilisée.", 409);
+    }
+  }
 }

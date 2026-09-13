@@ -152,7 +152,7 @@ export async function updateCrmRecord(actor: AuthContext, id: string, patch: Rec
     data: mergedData,
   });
   if (!validation.ok) throw new CrmValidationError(validation.error);
-  await validateConfiguredRecordData(actor.tenantId, existing.type, validation.value.data);
+  await validateConfiguredRecordData(actor.tenantId, existing.type, validation.value.data, existing.data);
   await assertReferencesBelongToTenant(actor.tenantId, validation.value.data);
 
   const db = getDb();

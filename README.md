@@ -1,8 +1,8 @@
-# Clarity CRM — cible de fermeture `clarity-crm_v1.0-closed`
+# Clarity CRM — fermeture `clarity-crm_v0.3`
 
 CRM professionnel modulaire conçu pour piloter les ventes, configurer les objets métier, automatiser les tâches et gouverner les accès sans complexité excessive.
 
-`clarity-crm_v1.0-closed` est la cible de consolidation des versions historiques `clarity-crm_v0.1`, `clarity-crm_v0.2` et `clarity-crm_v0.3`. Le runtime POSIX de référence est PostgreSQL. Cette fermeture n'est pas encore déclarée : la [matrice de traçabilité](docs/traceability-v1.0.md) indique précisément les fonctions livrées, partielles ou à faire.
+Ce lot consolide exclusivement `clarity-crm_v0.3`. Le runtime POSIX de référence est PostgreSQL ; D1/Wrangler est conservé uniquement comme legacy d'import. La [matrice de traçabilité](docs/traceability-v1.0.md) relie chaque exigence à son code, son test et sa preuve.
 
 ## Runtime cible
 
@@ -18,9 +18,9 @@ Le runtime de référence est une application Next.js/Vinext sous Node.js 22+ av
 - Migrations D1 historiques : `legacy/d1/drizzle/` garde l'historique SQLite/D1 pour vérification et import. Ce répertoire n'est pas la source de vérité du runtime PostgreSQL.
 - `drizzle.config.ts` sert à générer les artefacts PostgreSQL depuis `db/schema.ts` vers `postgres/generated`. Les migrations réellement appliquées en production restent celles de `postgres/migrations`.
 
-## Baseline technique historique — `clarity-crm_v0.3-foundations`
+## Baseline technique de départ
 
-L'état consolidé des fondations est la baseline technique de référence pour la construction de `clarity-crm_v1.0`.
+Le commit `1a5d73ccdecc9789b653fbf294d1fd6d52bf0b6b`, conservé par la référence distante `baseline-technique-depart-v0.3-20260913`, est le point de départ reproductible de cette fermeture. Cette référence ne désigne pas une version v0.3 fermée.
 
 Fonctions réellement validées :
 
@@ -46,15 +46,17 @@ Fonctions réellement validées :
 
 La matrice détaillée est maintenue dans `docs/traceability-v1.0.md`.
 
+La baseline de départ est documentée dans [`docs/baseline-v03-20260913.md`](docs/baseline-v03-20260913.md). Le moteur configurable fermé est décrit dans [`docs/configuration-engine-v0.3.md`](docs/configuration-engine-v0.3.md).
+
 Dette connue non bloquante pour le cœur CRM :
 
 - le provisioning administratif complet des organisations (création/renommage/archivage) n'est pas encore exposé tant que sa politique n'est pas spécifiée.
 
 ## État fonctionnel actuel
 
-Le moteur CRM universel, les configurations, formulaires, automatisations, modules, templates et webhooks existent à des niveaux différents de complétude. La racine `/` expose la console branchée aux API persistantes ; l'ancien cockpit UX de démonstration n'est plus la route principale.
+Le moteur CRM universel, les objets et champs personnalisés, les formulaires, pipelines multiples, relations configurables, automatisations, modules, templates et webhooks utilisent les mêmes API persistantes PostgreSQL. La racine `/` expose la console branchée aux API réelles ; l'ancien cockpit UX de démonstration n'est plus la route principale.
 
-Les documents binaires POSIX, les notifications internes, l'import CSV contrôlé (aperçu avant écriture) et les exports CSV/XLSX sont implémentés sur les API et la console, et validés par la recette CI PostgreSQL. Le dashboard actuel est calculé depuis les données CRM accessibles, mais attend encore une recette PostgreSQL complète.
+Les documents binaires POSIX, les notifications internes, l'import CSV contrôlé, les exports CSV/XLSX et le dashboard calculé depuis les données accessibles sont validés par les recettes CI PostgreSQL.
 
 Les webhooks sortants sont soumis à une politique anti-SSRF avec HTTPS public, allowlist optionnelle, résolution DNS juste avant envoi, blocage des adresses privées/réservées et lecture bornée des réponses.
 
@@ -111,11 +113,12 @@ Administration réelle ajoutée :
 
 ### clarity-crm_v0.3
 
-Cycle d'accès renforcé :
+Fermeture du moteur configurable :
 
-- acceptation automatique d'une invitation persistante au premier login ;
-- statut de membre `active` / `disabled` appliqué côté serveur ;
-- désactivation/réactivation contrôlée depuis l'administration ;
-- garde-fou contre l'auto-désactivation d'un administrateur ;
-- API `/api/audit` protégée et filtrable par résultat ou type de ressource ;
-- journal d'audit admin branché sur les événements serveur.
+- objets et champs personnalisés validés côté serveur ;
+- formulaires ordonnés écrivant dans le moteur CRM générique ;
+- plusieurs pipelines par objet et validation des étapes ;
+- relations configurables source/cible/cardinalité dans le moteur existant ;
+- versionnement atomique et restauration créant une nouvelle version ;
+- intégrité cross-tenant PostgreSQL renforcée par contraintes composites ;
+- recette E2E PostgreSQL de fermeture et matrice de traçabilité actualisée.

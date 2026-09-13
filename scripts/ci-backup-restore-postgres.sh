@@ -72,6 +72,6 @@ psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -c "CREATE DATABASE ${RESTORE_DB};"
 restore_database
 
 [[ "$(psql "$RESTORE_URL" -X -Atqc "SELECT title FROM crm_records WHERE id = 'backup-restore-record'")" == "Backup restore proof" ]]
-[[ "$(psql "$RESTORE_URL" -X -Atqc "SELECT count(*) FROM _clarity_migrations")" -ge 4 ]]
+[[ "$(psql "$RESTORE_URL" -X -Atqc "SELECT count(*) FROM _clarity_migrations")" -ge 5 ]]
 
 echo "POSTGRES_BACKUP_RESTORE=OK"

@@ -30,6 +30,7 @@ export function validateConfiguration(
   kind: string,
   definition: unknown,
 ): PolicySuccess<Record<string, unknown>> | PolicyFailure;
+export function isSafeConfiguredPattern(pattern: unknown): boolean;
 export function evaluateAutomationConditions(
   conditions: unknown[],
   record: Record<string, unknown>,
