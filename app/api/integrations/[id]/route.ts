@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { authErrorResponse, resolveAuthContext } from "@/lib/authz";
 import { getIntegrationConnection, integrationErrorResponse, updateIntegrationConnection } from "@/lib/integration-manager";
+import { assertNoSensitiveIntegrationKeys } from "@/lib/integration-safety.mjs";
 import { assertSameOriginMutation } from "@/lib/native-auth";
 import { readJsonBodyLimited } from "@/lib/v12-planning";
 
@@ -21,12 +22,16 @@ export async function PATCH(request: NextRequest, context: Context) {
     const actor = await resolveAuthContext(request);
     const { id } = await context.params;
     const body = await readJsonBodyLimited(request);
+    const configuration = body.configuration === undefined ? undefined : object(body.configuration);
+    const syncPolicy = body.syncPolicy === undefined ? undefined : object(body.syncPolicy);
+    if (configuration) assertNoSensitiveIntegrationKeys(configuration, "Configuration");
+    if (syncPolicy) assertNoSensitiveIntegrationKeys(syncPolicy, "Politique de synchronisation");
     const item = await updateIntegrationConnection(actor, id, {
       name: optionalText(body.name),
       capabilities: body.capabilities === undefined ? undefined : strings(body.capabilities),
       scopes: body.scopes === undefined ? undefined : strings(body.scopes),
-      configuration: body.configuration === undefined ? undefined : object(body.configuration),
-      syncPolicy: body.syncPolicy === undefined ? undefined : object(body.syncPolicy),
+      configuration,
+      syncPolicy,
       status: body.status === "disabled" || body.status === "draft" ? body.status : undefined,
     });
     return NextResponse.json({ item });
@@ -36,6 +41,9 @@ export async function PATCH(request: NextRequest, context: Context) {
 function handle(error: unknown, label: string) {
   const auth = authErrorResponse(error); if (auth) return auth;
   const integration = integrationErrorResponse(error); if (integration) return integration;
+  if (error instanceof Error && /clé sensible interdite|trop complexe|trop profonde/.test(error.message)) {
+    return NextResponse.json({ error: error.message }, { status: 400 });
+  }
   console.error(label, error);
   return NextResponse.json({ error: "Integration Manager indisponible." }, { status: 503 });
 }
