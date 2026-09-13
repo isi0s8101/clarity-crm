@@ -41,6 +41,7 @@ jobs:
           test -x scripts/ci-e2e-posix.sh
           test -x scripts/ci-e2e-v03-configuration-postgres.sh
           test -x scripts/ci-e2e-automation-queue-postgres.sh
+          test -f scripts/ci-e2e-v11-postgres.sh
           test -x scripts/ci-backup-restore-postgres.sh
           test -x scripts/migrate-legacy-d1.mjs
           test -x scripts/ci-legacy-d1-migration.sh
@@ -51,6 +52,7 @@ jobs:
           bash -n scripts/ci-e2e-posix.sh
           bash -n scripts/ci-e2e-v03-configuration-postgres.sh
           bash -n scripts/ci-e2e-automation-queue-postgres.sh
+          bash -n scripts/ci-e2e-v11-postgres.sh
           bash -n scripts/ci-backup-restore-postgres.sh
           bash -n scripts/ci-legacy-d1-migration.sh
           bash -n scripts/upgrade-legacy-d1-posix.sh
@@ -73,6 +75,10 @@ jobs:
           NODE_ENV: production
       - name: Validate PostgreSQL automation queue and webhooks
         run: bash scripts/ci-e2e-automation-queue-postgres.sh
+        env:
+          NODE_ENV: production
+      - name: Validate v1.1 on PostgreSQL
+        run: bash scripts/ci-e2e-v11-postgres.sh
         env:
           NODE_ENV: production
       - name: Validate legacy D1 to PostgreSQL migration
